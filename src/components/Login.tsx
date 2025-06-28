@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Mail, Lock, Eye, EyeOff, User } from 'lucide-react'
+import { Mail, Lock, Eye, EyeOff, User, Globe } from 'lucide-react'
 import { toast } from 'react-hot-toast'
+import { config } from '../config'
 
 interface LoginProps {
   onLogin: (userData: any) => void
@@ -24,7 +25,7 @@ export default function Login({ onLogin }: LoginProps) {
 
     try {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register'
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${config.apiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -51,7 +52,7 @@ export default function Login({ onLogin }: LoginProps) {
 
   const handleGoogleLogin = async () => {
     // Google OAuth implementation would go here
-    toast.info('Google OAuth integration coming soon!')
+    toast.success('Google OAuth integration coming soon!')
   }
 
   return (
@@ -156,7 +157,7 @@ export default function Login({ onLogin }: LoginProps) {
               onClick={handleGoogleLogin}
               className="mt-4 w-full flex items-center justify-center space-x-2 bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition-colors"
             >
-              <Google className="w-5 h-5" />
+              <Globe className="w-5 h-5" />
               <span>Google</span>
             </button>
           </div>

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, User, Globe } from 'lucide-react'
 import { toast } from 'react-hot-toast'
+import { config } from '../config'
 
 interface AuthProps {
   onLogin: (userData: any) => void
@@ -23,7 +24,7 @@ export default function Auth({ onLogin }: AuthProps) {
 
     try {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register'
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${config.apiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
