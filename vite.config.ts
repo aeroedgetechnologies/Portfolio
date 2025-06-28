@@ -13,11 +13,11 @@ export default defineConfig({
     port: 3006,
     proxy: {
       '/api': {
-        target: 'http://localhost:5003',
+        target: 'https://forgetworries.onrender.com',
         changeOrigin: true,
       },
       '/socket.io': {
-        target: 'http://localhost:5003',
+        target: 'https://forgetworries.onrender.com',
         ws: true,
       },
     },
