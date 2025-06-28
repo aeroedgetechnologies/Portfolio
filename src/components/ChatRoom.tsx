@@ -171,6 +171,15 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     })
 
     newSocket.on('message:receive', (newMessage: Message) => {
+      console.log('Socket message:receive event triggered:', newMessage)
+      console.log('Current messages count:', messages.length)
+      
+      // Ignore messages sent by the current user (they're already in local state)
+      if (newMessage.senderId === currentUser.id) {
+        console.log('Ignoring message sent by current user')
+        return
+      }
+      
       // Check if this message is for the current user (either as sender or receiver)
       const isForCurrentUser = newMessage.senderId === currentUser.id || newMessage.receiverId === currentUser.id
       
@@ -178,7 +187,20 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       if (selectedUser && 
           ((newMessage.senderId === currentUser.id && newMessage.receiverId === selectedUser.id) ||
            (newMessage.senderId === selectedUser.id && newMessage.receiverId === currentUser.id))) {
-        setMessages(prev => [...prev, newMessage])
+        
+        // Check if message already exists to prevent duplicates
+        setMessages(prev => {
+          const messageExists = prev.some(msg => msg.id === newMessage.id)
+          console.log('Message already exists:', messageExists, 'Message ID:', newMessage.id)
+          
+          if (!messageExists) {
+            console.log('Adding new message to state')
+            return [...prev, newMessage]
+          } else {
+            console.log('Skipping duplicate message')
+            return prev
+          }
+        })
       }
       
       // Show notification for any message sent TO the current user (not from them)
@@ -509,6 +531,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       if (response.ok) {
         const newMessage = await response.json()
         console.log('Message sent successfully:', newMessage)
+        // Add message to sender's state immediately
         setMessages(prev => [...prev, newMessage])
         setMessageInput('')
         setShowEmojiPicker(false)
@@ -1100,16 +1123,18 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                 }}
                 onKeyPress={handleKeyPress}
                 onBlur={() => handleTyping(false)}
-                placeholder={selectedUser ? `Message ${selectedUser.username}...` : "Type a message..."}
-                className="w-full p-2 sm:p-3 border border-secondary-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                placeholder={selectedUser ? `Message ${selectedUser.username}...` : 'Select a user to start chatting...'}
+                className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 rows={1}
+                disabled={!selectedUser}
               />
             </div>
             
             <button
               onClick={handleSendMessage}
-              disabled={!messageInput.trim()}
-              className="p-2 sm:p-3 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 transition-colors"
+              disabled={!messageInput.trim() || !selectedUser}
+              className="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Send message"
             >
               <Send className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
@@ -1118,4 +1143,4 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       </div>
     </div>
   )
-} 
+}

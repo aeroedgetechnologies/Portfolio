@@ -500,12 +500,13 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
       const newMessage = new Message(message)
       await newMessage.save()
       console.log('Message endpoint - Message saved to MongoDB')
-      // Emit to both sender and receiver
+      // Emit to all clients (sender will handle it properly in frontend)
       io.emit('message:receive', newMessage)
       res.json(newMessage)
     } else {
       const savedMessage = saveMessage(message)
       console.log('Message endpoint - Message saved to memory')
+      // Emit to all clients (sender will handle it properly in frontend)
       io.emit('message:receive', savedMessage)
       res.json(savedMessage)
     }
