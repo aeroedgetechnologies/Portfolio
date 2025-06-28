@@ -14,10 +14,9 @@
     {
       "src": "/socket.io/(.*)",
       "dest": "/server/index.js"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/server/index.js"
     }
-  ]
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
 } 
