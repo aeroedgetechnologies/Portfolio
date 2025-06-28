@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { io, Socket } from 'socket.io-client'
-import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Bell, Smile, Image, File, Camera } from 'lucide-react'
+import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Smile, Image, File, Camera } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmojiPicker from 'emoji-picker-react'
 import { config } from '../config'
@@ -61,6 +61,16 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const profileInputRef = useRef<HTMLInputElement>(null)
 
+  // Utility function to convert relative URLs to absolute URLs
+  const getFullUrl = (url: string) => {
+    if (!url) return url
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url
+    }
+    // If it's a relative URL, prepend the backend URL
+    return `${config.apiBaseUrl}${url}`
+  }
+
   // Create notification sound
   const playNotificationSound = () => {
     if (!notificationsEnabled) return
@@ -100,6 +110,27 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   }
 
   useEffect(() => {
+    // Test backend connectivity
+    const testBackendConnection = async () => {
+      try {
+        console.log('Testing backend connection to:', config.apiBaseUrl)
+        const response = await fetch(`${config.apiBaseUrl}/api/users`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        })
+        console.log('Backend test response:', response.status, response.ok)
+        if (!response.ok) {
+          console.error('Backend connection failed:', response.status)
+        }
+      } catch (error) {
+        console.error('Backend connection error:', error)
+      }
+    }
+    
+    testBackendConnection()
+    
     // Request notification permission immediately
     if ('Notification' in window) {
       if (Notification.permission === 'default') {
@@ -365,7 +396,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   }
 
   const handleGifSelect = (gif: any) => {
-    sendMessage(gif.images.original.url, 'gif')
+    sendMessage(gif.images.original.url, 'gif', undefined, undefined, gif.images.original.url)
     setShowGifSearch(false)
     setGifSearchQuery('')
   }
@@ -390,7 +421,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       
       if (response.ok) {
         const { fileUrl, fileName, fileSize } = await response.json()
-        await sendMessage(fileUrl, file.type.startsWith('image/') ? 'image' : 'file', fileName, fileSize)
+        await sendMessage(fileUrl, file.type.startsWith('image/') ? 'image' : 'file', fileName, fileSize, fileUrl)
       } else {
         toast.error('Failed to upload file')
       }
@@ -412,6 +443,10 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       formData.append('file', file)
       
       const token = localStorage.getItem('token')
+      console.log('Uploading profile picture to:', `${config.apiBaseUrl}/api/profile/upload`)
+      console.log('Token exists:', !!token)
+      console.log('File:', file.name, file.size, file.type)
+      
       const response = await fetch(`${config.apiBaseUrl}/api/profile/upload`, {
         method: 'POST',
         headers: {
@@ -420,14 +455,20 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
         body: formData
       })
       
+      console.log('Profile upload response status:', response.status)
+      console.log('Profile upload response ok:', response.ok)
+      
       if (response.ok) {
         const { avatar } = await response.json()
+        console.log('Profile picture uploaded successfully:', avatar)
         // Update current user's avatar
         const updatedUser = { ...currentUser, avatar }
         localStorage.setItem('user', JSON.stringify(updatedUser))
         toast.success('Profile picture updated!')
       } else {
-        toast.error('Failed to upload profile picture')
+        const errorText = await response.text()
+        console.error('Profile upload failed:', response.status, errorText)
+        toast.error(`Failed to upload profile picture: ${response.status}`)
       }
     } catch (error) {
       console.error('Profile upload error:', error)
@@ -437,11 +478,15 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     }
   }
 
-  const sendMessage = async (content: string, type: 'text' | 'file' | 'image' | 'gif' = 'text', fileName?: string, fileSize?: number) => {
+  const sendMessage = async (content: string, type: 'text' | 'file' | 'image' | 'gif' = 'text', fileName?: string, fileSize?: number, fileUrl?: string) => {
     if (!selectedUser || !content.trim()) return
     
     try {
       const token = localStorage.getItem('token')
+      console.log('Sending message to:', `${config.apiBaseUrl}/api/messages`)
+      console.log('Token exists:', !!token)
+      console.log('Selected user:', selectedUser)
+      
       const response = await fetch(`${config.apiBaseUrl}/api/messages`, {
         method: 'POST',
         headers: {
@@ -453,18 +498,25 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
           type,
           receiverId: selectedUser.id,
           fileName,
-          fileSize
+          fileSize,
+          fileUrl
         })
       })
       
+      console.log('Response status:', response.status)
+      console.log('Response ok:', response.ok)
+      
       if (response.ok) {
         const newMessage = await response.json()
+        console.log('Message sent successfully:', newMessage)
         setMessages(prev => [...prev, newMessage])
         setMessageInput('')
         setShowEmojiPicker(false)
         setShowGifSearch(false)
       } else {
-        toast.error('Failed to send message')
+        const errorText = await response.text()
+        console.error('Send message failed:', response.status, errorText)
+        toast.error(`Failed to send message: ${response.status}`)
       }
     } catch (error) {
       console.error('Send message error:', error)
@@ -512,7 +564,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
             <div className="relative group">
               {currentUser.avatar ? (
                 <img 
-                  src={currentUser.avatar} 
+                  src={getFullUrl(currentUser.avatar)} 
                   alt={currentUser.username}
                   className="w-10 h-10 rounded-full object-cover"
                 />
@@ -601,7 +653,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                     <div className="flex items-center space-x-3">
                       {user.avatar ? (
                         <img 
-                          src={user.avatar} 
+                          src={getFullUrl(user.avatar)} 
                           alt={user.username}
                           className="w-8 h-8 rounded-full object-cover"
                         />
@@ -642,7 +694,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
             <div className="relative group">
               {currentUser.avatar ? (
                 <img 
-                  src={currentUser.avatar} 
+                  src={getFullUrl(currentUser.avatar)} 
                   alt={currentUser.username}
                   className="w-8 h-8 rounded-full object-cover"
                 />
@@ -734,7 +786,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                 <div className="flex items-center space-x-3">
                   {user.avatar ? (
                     <img 
-                      src={user.avatar} 
+                      src={getFullUrl(user.avatar)} 
                       alt={user.username}
                       className="w-8 h-8 rounded-full object-cover"
                     />
@@ -772,7 +824,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
               <div className="flex items-center space-x-3">
                 {selectedUser.avatar ? (
                   <img 
-                    src={selectedUser.avatar} 
+                    src={getFullUrl(selectedUser.avatar)} 
                     alt={selectedUser.username}
                     className="w-10 h-10 rounded-full object-cover"
                   />
@@ -832,7 +884,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                     <div className="flex-shrink-0">
                       {message.sender.avatar ? (
                         <img 
-                          src={message.sender.avatar} 
+                          src={getFullUrl(message.sender.avatar)} 
                           alt={message.sender.username}
                           className="w-6 h-6 sm:w-8 sm:h-8 rounded-full object-cover"
                         />
@@ -854,10 +906,10 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                       {message.type === 'image' && (
                         <div className="mb-2">
                           <img 
-                            src={message.content} 
+                            src={getFullUrl(message.fileUrl || message.content)} 
                             alt="Shared image" 
                             className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                            onClick={() => window.open(message.content, '_blank')}
+                            onClick={() => window.open(getFullUrl(message.fileUrl || message.content), '_blank')}
                           />
                         </div>
                       )}
@@ -865,10 +917,10 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                       {message.type === 'gif' && (
                         <div className="mb-2">
                           <img 
-                            src={message.content} 
+                            src={getFullUrl(message.fileUrl || message.content)} 
                             alt="GIF" 
                             className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                            onClick={() => window.open(message.content, '_blank')}
+                            onClick={() => window.open(getFullUrl(message.fileUrl || message.content), '_blank')}
                           />
                         </div>
                       )}
@@ -885,7 +937,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                             </div>
                           </div>
                           <a 
-                            href={message.content} 
+                            href={getFullUrl(message.fileUrl || message.content)} 
                             download={message.fileName}
                             className="mt-2 inline-block text-sm text-blue-500 hover:text-blue-600"
                           >

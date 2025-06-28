@@ -25,13 +25,13 @@ export default function Home() {
       case 'auth':
         return <Auth onLogin={handleLogin} />
       case 'chat':
-        return (
+        return user ? (
           <ChatRoom 
-            user={user} 
-            onLogout={handleLogout}
-            onNavigateToAnimations={() => setCurrentView('animations')}
-            onNavigateTo3D={() => setCurrentView('3d')}
+            currentUser={user} 
+            onBack={handleLogout}
           />
+        ) : (
+          <Auth onLogin={handleLogin} />
         )
       case 'animations':
         return (

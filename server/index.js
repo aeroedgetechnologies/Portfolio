@@ -155,12 +155,20 @@ const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization']
   const token = authHeader && authHeader.split(' ')[1]
 
+  console.log('Auth middleware - authHeader:', authHeader ? 'present' : 'missing')
+  console.log('Auth middleware - token:', token ? 'present' : 'missing')
+
   if (!token) {
+    console.log('Auth middleware - No token provided')
     return res.sendStatus(401)
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403)
+    if (err) {
+      console.log('Auth middleware - Token verification failed:', err.message)
+      return res.sendStatus(403)
+    }
+    console.log('Auth middleware - Token verified for user:', user.id)
     req.user = user
     next()
   })
@@ -445,9 +453,13 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
 
 app.post('/api/messages', authenticateToken, async (req, res) => {
   try {
-    const { content, type = 'text', fileName, fileSize, receiverId } = req.body
+    console.log('Message endpoint - Request received:', req.body)
+    console.log('Message endpoint - User:', req.user)
+    
+    const { content, type = 'text', fileName, fileSize, receiverId, fileUrl } = req.body
     
     if (!receiverId) {
+      console.log('Message endpoint - Missing receiverId')
       return res.status(400).json({ message: 'Receiver ID is required' })
     }
     
@@ -458,7 +470,10 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
       user = findUserById(req.user.id)
     }
     
+    console.log('Message endpoint - Found user:', user ? 'yes' : 'no')
+    
     if (!user) {
+      console.log('Message endpoint - User not found')
       return res.status(404).json({ message: 'User not found' })
     }
 
@@ -475,17 +490,22 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
       },
       timestamp: new Date(),
       fileName,
-      fileSize
+      fileSize,
+      fileUrl
     }
+
+    console.log('Message endpoint - Created message:', message)
 
     if (isConnected) {
       const newMessage = new Message(message)
       await newMessage.save()
+      console.log('Message endpoint - Message saved to MongoDB')
       // Emit to both sender and receiver
       io.emit('message:receive', newMessage)
       res.json(newMessage)
     } else {
       const savedMessage = saveMessage(message)
+      console.log('Message endpoint - Message saved to memory')
       io.emit('message:receive', savedMessage)
       res.json(savedMessage)
     }
@@ -501,7 +521,10 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
       return res.status(400).json({ message: 'No file uploaded' })
     }
 
-    const fileUrl = `/uploads/${req.file.filename}`
+    // Create full URL for the file
+    const baseUrl = req.protocol + '://' + req.get('host')
+    const fileUrl = `${baseUrl}/uploads/${req.file.filename}`
+    
     res.json({
       fileUrl,
       fileName: req.file.originalname,
@@ -515,32 +538,47 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
 
 app.post('/api/profile/upload', authenticateToken, upload.single('file'), async (req, res) => {
   try {
+    console.log('Profile upload endpoint - Request received')
+    console.log('Profile upload endpoint - User:', req.user)
+    console.log('Profile upload endpoint - File:', req.file ? 'present' : 'missing')
+    
     if (!req.file) {
+      console.log('Profile upload endpoint - No file uploaded')
       return res.status(400).json({ message: 'No file uploaded' })
     }
 
     // Check if file is an image
     if (!req.file.mimetype.startsWith('image/')) {
+      console.log('Profile upload endpoint - Invalid file type:', req.file.mimetype)
       return res.status(400).json({ message: 'Only image files are allowed' })
     }
 
-    const avatarUrl = `/uploads/${req.file.filename}`
+    // Create full URL for the avatar
+    const baseUrl = req.protocol + '://' + req.get('host')
+    const avatarUrl = `${baseUrl}/uploads/${req.file.filename}`
+    console.log('Profile upload endpoint - Avatar URL:', avatarUrl)
     
     // Update user's avatar in database
     if (isConnected) {
-      await User.findOneAndUpdate(
+      const updatedUser = await User.findOneAndUpdate(
         { id: req.user.id },
-        { avatar: avatarUrl, updatedAt: new Date() }
+        { avatar: avatarUrl, updatedAt: new Date() },
+        { new: true }
       )
+      console.log('Profile upload endpoint - User updated in MongoDB:', updatedUser ? 'yes' : 'no')
     } else {
       const user = findUserById(req.user.id)
       if (user) {
         user.avatar = avatarUrl
         user.updatedAt = new Date()
         saveUser(user)
+        console.log('Profile upload endpoint - User updated in memory')
+      } else {
+        console.log('Profile upload endpoint - User not found in memory')
       }
     }
 
+    console.log('Profile upload endpoint - Success, returning avatar URL')
     res.json({ avatar: avatarUrl })
   } catch (error) {
     console.error('Profile upload error:', error)
