@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { io, Socket } from 'socket.io-client'
-import { Send, Paperclip, ArrowLeft, Search, Users, User, MessageCircle, Bell, Smile, Image, File, Camera } from 'lucide-react'
+import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Bell, Smile, Image, File, Camera } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmojiPicker from 'emoji-picker-react'
 import { config } from '../config'

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Play, RotateCcw, ArrowLeft, Sparkles, Heart, Zap, Star, Target } from 'lucide-react'
+import { RotateCcw, ArrowLeft, Sparkles, Heart, Zap, Star, Target } from 'lucide-react'
 import { gsap } from 'gsap'
 
 interface AnimationsPlaygroundProps {

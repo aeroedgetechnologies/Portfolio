@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Mail, Lock, Eye, EyeOff, User, ArrowRight, Globe } from 'lucide-react'
+import { Mail, Lock, Eye, EyeOff, User, Globe } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 
 interface AuthProps {
