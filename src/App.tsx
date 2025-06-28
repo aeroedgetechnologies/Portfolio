@@ -1,16 +1,55 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { gsap } from 'gsap'
-import { MessageCircle, Users, Zap, Sparkles, ArrowRight, Play } from 'lucide-react'
+import { MessageCircle, Users, Zap, Sparkles, ArrowRight, Play, LogOut, User } from 'lucide-react'
 import ChatRoom from './components/ChatRoom'
 import AnimationsPlayground from './components/AnimationsPlayground'
 import ThreeJSPlayground from './components/ThreeJSPlayground'
+import Auth from './components/Auth'
 import { Toaster } from 'react-hot-toast'
 
-type Page = 'home' | 'chat' | 'animations' | '3d'
+type Page = 'auth' | 'home' | 'chat' | 'animations' | '3d'
+
+interface UserData {
+  id: string
+  username: string
+  email: string
+}
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('home')
+  const [currentPage, setCurrentPage] = useState<Page>('auth')
+  const [user, setUser] = useState<UserData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    // Check if user is already logged in
+    const token = localStorage.getItem('token')
+    const userData = localStorage.getItem('user')
+    
+    if (token && userData) {
+      try {
+        const parsedUser = JSON.parse(userData)
+        setUser(parsedUser)
+        setCurrentPage('home')
+      } catch (error) {
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+      }
+    }
+    setIsLoading(false)
+  }, [])
+
+  const handleLogin = (userData: UserData) => {
+    setUser(userData)
+    setCurrentPage('home')
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    setUser(null)
+    setCurrentPage('auth')
+  }
 
   const features = [
     {
@@ -20,8 +59,8 @@ function App() {
     },
     {
       icon: Users,
-      title: 'Millions of Users',
-      description: 'Scalable architecture for massive user bases'
+      title: 'User Search',
+      description: 'Find and chat with other users'
     },
     {
       icon: Zap,
@@ -35,8 +74,23 @@ function App() {
     }
   ]
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Auth onLogin={handleLogin} />
+  }
+
   if (currentPage === 'chat') {
-    return <ChatRoom onBack={() => setCurrentPage('home')} />
+    return <ChatRoom onBack={() => setCurrentPage('home')} currentUser={user} />
   }
 
   if (currentPage === 'animations') {
@@ -73,6 +127,10 @@ function App() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
             >
+              <div className="flex items-center space-x-2 text-sm text-gray-600">
+                <User className="w-4 h-4" />
+                <span>{user.username}</span>
+              </div>
               <button 
                 onClick={() => setCurrentPage('chat')}
                 className="text-secondary-600 hover:text-primary-500 transition-colors"
@@ -91,6 +149,13 @@ function App() {
               >
                 3D Playground
               </button>
+              <button 
+                onClick={handleLogout}
+                className="flex items-center space-x-1 text-red-600 hover:text-red-700 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Logout</span>
+              </button>
             </motion.div>
           </div>
         </div>
@@ -105,9 +170,9 @@ function App() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8 }}
           >
-            <span className="gradient-text">Lightning Fast</span>
+            <span className="gradient-text">Welcome back,</span>
             <br />
-            Chat Experience
+            {user.username}!
           </motion.h1>
           
           <motion.p 
@@ -232,7 +297,7 @@ function App() {
       <footer className="py-12 px-4 sm:px-6 lg:px-8 bg-secondary-900 text-white">
         <div className="max-w-7xl mx-auto text-center">
           <p className="text-secondary-400">
-            © 2024 FastChat. Built with Vite, React, and Socket.IO.
+            © 2024 FastChat. Built with ❤️ by Govinda Yadav
           </p>
         </div>
       </footer>
