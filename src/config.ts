@@ -3,11 +3,11 @@
 const isDevelopment = process.env.NODE_ENV !== 'production'
 
 export const config = {
-  // API base URL - use relative URLs in production, localhost in development
-  apiBaseUrl: isDevelopment ? 'http://localhost:5003' : '',
+  // API base URL - use Render backend in production, localhost in development
+  apiBaseUrl: isDevelopment ? 'http://localhost:5003' : 'https://forgetworries.onrender.com',
   
-  // WebSocket URL - use relative URLs in production, localhost in development
-  wsUrl: isDevelopment ? 'http://localhost:5003' : '',
+  // WebSocket URL - use Render backend in production, localhost in development
+  wsUrl: isDevelopment ? 'http://localhost:5003' : 'https://forgetworries.onrender.com',
   
   // Environment
   isDevelopment,
