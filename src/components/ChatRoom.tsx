@@ -64,6 +64,11 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   // Utility function to convert relative URLs to absolute URLs
   const getFullUrl = (url: string) => {
     if (!url) return url
+    // If it's already a data URL, return as is
+    if (url.startsWith('data:')) {
+      return url
+    }
+    // If it's already an absolute URL, return as is
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return url
     }
@@ -529,8 +534,10 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       })
       
       if (response.ok) {
-        const { fileUrl, fileName, fileSize } = await response.json()
-        await sendMessage(fileUrl, file.type.startsWith('image/') ? 'image' : 'file', fileName, fileSize, fileUrl)
+        const { fileUrl, fileName, fileSize, isImage, dataUrl } = await response.json()
+        // Use dataUrl for images, fileUrl for other files
+        const finalUrl = isImage ? dataUrl : fileUrl
+        await sendMessage(finalUrl, file.type.startsWith('image/') ? 'image' : 'file', fileName, fileSize, finalUrl)
       } else {
         toast.error('Failed to upload file')
       }
@@ -570,7 +577,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       if (response.ok) {
         const { avatar } = await response.json()
         console.log('Profile picture uploaded successfully:', avatar)
-        // Update current user's avatar
+        // Update current user's avatar (avatar is now a data URL)
         const updatedUser = { ...currentUser, avatar }
         localStorage.setItem('user', JSON.stringify(updatedUser))
         toast.success('Profile picture updated!')

@@ -102,7 +102,9 @@ const fileSchema = new mongoose.Schema({
   fileSize: { type: Number, required: true },
   mimeType: { type: String, required: true },
   uploadedBy: { type: String, required: true },
-  uploadedAt: { type: Date, default: Date.now }
+  uploadedAt: { type: Date, default: Date.now },
+  base64Data: { type: String }, // Store base64 data for images
+  isImage: { type: Boolean, default: false }
 })
 
 const User = mongoose.model('User', userSchema)
@@ -215,18 +217,15 @@ app.use('/uploads', (req, res, next) => {
 
 app.use('/uploads', express.static(uploadsDir))
 
-// File upload configuration
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir)
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`
-    cb(null, uniqueName)
+// File upload configuration - Store as base64 in database instead of files
+const storage = multer.memoryStorage() // Store in memory temporarily
+
+const upload = multer({ 
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
   }
 })
-
-const upload = multer({ storage })
 
 // JWT Secret (use environment variable in production)
 const JWT_SECRET = 'your-secret-key'
@@ -603,36 +602,43 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
       return res.status(400).json({ message: 'No file uploaded' })
     }
 
-    // Create full URL for the file
-    const baseUrl = req.protocol + '://' + req.get('host')
-    const fileUrl = `${baseUrl}/uploads/${req.file.filename}`
+    // Convert file to base64
+    const base64Data = req.file.buffer.toString('base64')
+    const isImage = req.file.mimetype.startsWith('image/')
+    
+    // Create data URL for images
+    const dataUrl = isImage ? `data:${req.file.mimetype};base64,${base64Data}` : null
     
     // Create file metadata
     const fileData = {
       id: uuidv4(),
-      filename: req.file.filename,
+      filename: `${Date.now()}-${uuidv4()}${path.extname(req.file.originalname)}`,
       originalName: req.file.originalname,
-      fileUrl,
+      fileUrl: dataUrl || `${req.protocol}://${req.get('host')}/api/files/${uuidv4()}`,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       uploadedBy: req.user.id,
-      uploadedAt: new Date()
+      uploadedAt: new Date(),
+      base64Data,
+      isImage
     }
 
     // Store file metadata in database
     if (isConnected) {
       const newFile = new File(fileData)
       await newFile.save()
-      console.log('File metadata saved to MongoDB')
+      console.log('File metadata saved to MongoDB with base64 data')
     } else {
       saveFile(fileData)
-      console.log('File metadata saved to memory')
+      console.log('File metadata saved to memory with base64 data')
     }
     
     res.json({
-      fileUrl,
+      fileUrl: fileData.fileUrl,
       fileName: req.file.originalname,
-      fileSize: req.file.size
+      fileSize: req.file.size,
+      isImage,
+      dataUrl: isImage ? dataUrl : null
     })
   } catch (error) {
     console.error('File upload error:', error)
@@ -657,21 +663,23 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
       return res.status(400).json({ message: 'Only image files are allowed' })
     }
 
-    // Create full URL for the avatar
-    const baseUrl = req.protocol + '://' + req.get('host')
-    const avatarUrl = `${baseUrl}/uploads/${req.file.filename}`
-    console.log('Profile upload endpoint - Avatar URL:', avatarUrl)
+    // Convert file to base64
+    const base64Data = req.file.buffer.toString('base64')
+    const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`
+    console.log('Profile upload endpoint - Data URL created')
     
     // Store file metadata for profile pictures too
     const fileData = {
       id: uuidv4(),
-      filename: req.file.filename,
+      filename: `${Date.now()}-${uuidv4()}${path.extname(req.file.originalname)}`,
       originalName: req.file.originalname,
-      fileUrl: avatarUrl,
+      fileUrl: dataUrl,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       uploadedBy: req.user.id,
-      uploadedAt: new Date()
+      uploadedAt: new Date(),
+      base64Data,
+      isImage: true
     }
 
     if (isConnected) {
@@ -685,14 +693,14 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
     if (isConnected) {
       const updatedUser = await User.findOneAndUpdate(
         { id: req.user.id },
-        { avatar: avatarUrl, updatedAt: new Date() },
+        { avatar: dataUrl, updatedAt: new Date() },
         { new: true }
       )
       console.log('Profile upload endpoint - User updated in MongoDB:', updatedUser ? 'yes' : 'no')
     } else {
       const user = findUserById(req.user.id)
       if (user) {
-        user.avatar = avatarUrl
+        user.avatar = dataUrl
         user.updatedAt = new Date()
         saveUser(user)
         console.log('Profile upload endpoint - User updated in memory')
@@ -701,8 +709,8 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
       }
     }
 
-    console.log('Profile upload endpoint - Success, returning avatar URL')
-    res.json({ avatar: avatarUrl })
+    console.log('Profile upload endpoint - Success, returning data URL')
+    res.json({ avatar: dataUrl })
   } catch (error) {
     console.error('Profile upload error:', error)
     res.status(500).json({ message: 'Server error' })
@@ -802,6 +810,36 @@ app.get('/api/test', (req, res) => {
   })
 })
 
+// Serve files from base64 data
+app.get('/api/files/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params
+    
+    let fileData
+    if (isConnected) {
+      fileData = await File.findOne({ id: fileId })
+    } else {
+      fileData = findFileById(fileId)
+    }
+    
+    if (!fileData) {
+      return res.status(404).json({ message: 'File not found' })
+    }
+    
+    if (fileData.isImage && fileData.base64Data) {
+      // For images, return the data URL
+      const dataUrl = `data:${fileData.mimeType};base64,${fileData.base64Data}`
+      res.json({ dataUrl, fileData })
+    } else {
+      // For non-images, return file info
+      res.json({ fileData })
+    }
+  } catch (error) {
+    console.error('File serve error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id)
@@ -849,6 +887,45 @@ io.on('connection', (socket) => {
 // Serve React app
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'))
+})
+
+// Migration endpoint to convert existing files to base64 (run once)
+app.post('/api/migrate-files-to-base64', authenticateToken, async (req, res) => {
+  try {
+    if (!isConnected) {
+      return res.status(400).json({ message: 'Migration only works with MongoDB' })
+    }
+    
+    const files = await File.find({})
+    let migratedCount = 0
+    
+    for (const file of files) {
+      if (!file.base64Data && file.isImage) {
+        try {
+          // Try to read the file from disk
+          const filePath = path.join(uploadsDir, file.filename)
+          if (fs.existsSync(filePath)) {
+            const fileBuffer = fs.readFileSync(filePath)
+            file.base64Data = fileBuffer.toString('base64')
+            file.fileUrl = `data:${file.mimeType};base64,${file.base64Data}`
+            await file.save()
+            migratedCount++
+            console.log(`Migrated file: ${file.filename}`)
+          }
+        } catch (error) {
+          console.error(`Failed to migrate file ${file.filename}:`, error)
+        }
+      }
+    }
+    
+    res.json({ 
+      message: `Migration completed. ${migratedCount} files migrated to base64.`,
+      migratedCount 
+    })
+  } catch (error) {
+    console.error('Migration error:', error)
+    res.status(500).json({ message: 'Migration failed' })
+  }
 })
 
 const PORT = process.env.PORT || 5003
