@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { io, Socket } from 'socket.io-client'
-import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Smile, Image, File, Camera, Play, Sparkles, LogOut, Menu } from 'lucide-react'
+import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Smile, Image, File, Camera, Play, Sparkles, LogOut, Menu, Edit } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmojiPicker from 'emoji-picker-react'
 import { config } from '../config'
@@ -16,10 +16,12 @@ interface Message {
     avatar?: string
   }
   timestamp: Date
-  type?: 'text' | 'file' | 'image' | 'gif'
+  type?: 'text' | 'file' | 'image' | 'video' | 'audio' | 'gif'
   fileUrl?: string
   fileName?: string
   fileSize?: number
+  isVideo?: boolean
+  isAudio?: boolean
 }
 
 interface UserData {
@@ -60,6 +62,9 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   const [unreadMessages, setUnreadMessages] = useState<{[key: string]: number}>({})
   const [localCurrentUser, setLocalCurrentUser] = useState<UserData>(currentUser)
+  const [showUsernameModal, setShowUsernameModal] = useState(false)
+  const [newUsername, setNewUsername] = useState('')
+  const [isChangingUsername, setIsChangingUsername] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -78,57 +83,6 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
     }
     // If it's a relative URL, prepend the backend URL
     return `${config.apiBaseUrl}${url}`
-  }
-
-  // Function to recover files from database after server restart
-  const recoverFiles = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const response = await fetch(`${config.apiBaseUrl}/api/files/recover`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-      
-      if (response.ok) {
-        const { files } = await response.json()
-        console.log('Recovered files from database:', files.length)
-        // You can use this to restore file references if needed
-        return files
-      }
-    } catch (error) {
-      console.error('File recovery error:', error)
-    }
-    return []
-  }
-
-  // Function to check for missing files
-  const checkMissingFiles = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const response = await fetch(`${config.apiBaseUrl}/api/files/check-missing`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-      
-      if (response.ok) {
-        const { missingFiles, totalMissing, message } = await response.json()
-        console.log('Missing files check:', message, 'Total missing:', totalMissing)
-        
-        if (totalMissing > 0) {
-          toast.error(`${totalMissing} files are missing after server restart. You may need to re-upload them.`)
-          console.log('Missing files:', missingFiles)
-        }
-        
-        return missingFiles
-      }
-    } catch (error) {
-      console.error('Check missing files error:', error)
-    }
-    return []
   }
 
   // Create notification sound
@@ -169,26 +123,6 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
     }
   }
 
-  // Function to recover missing images from base64 backup
-  const recoverMissingImage = async (filename: string) => {
-    try {
-      const token = localStorage.getItem('token')
-      const response = await fetch(`${config.apiBaseUrl}/api/files/${filename}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-      
-      if (response.ok) {
-        const { dataUrl } = await response.json()
-        return dataUrl
-      }
-    } catch (error) {
-      console.error('Image recovery error:', error)
-    }
-    return null
-  }
-
   useEffect(() => {
     // Test backend connectivity
     const testBackendConnection = async () => {
@@ -219,12 +153,6 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
     }
     
     testBackendConnection()
-    
-    // Recover files from database (useful after server restart)
-    recoverFiles()
-    
-    // Check for missing files after server restart
-    checkMissingFiles()
     
     // Request notification permission immediately
     if ('Notification' in window) {
@@ -543,24 +471,24 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
     const file = event.target.files?.[0]
     if (!file) return
 
-    console.log('File upload started:', file.name, file.size, file.type)
-    console.log('Selected user:', selectedUser)
-    
+    // Check if a user is selected
     if (!selectedUser) {
       toast.error('Please select a user to send the file to')
       return
     }
-    
+
     setIsUploading(true)
     try {
       const formData = new FormData()
       formData.append('file', file)
       
       const token = localStorage.getItem('token')
-      console.log('Uploading file to:', `${config.apiBaseUrl}/api/files/upload`)
+      console.log('Uploading file to:', `${config.apiBaseUrl}/api/upload`)
       console.log('Token exists:', !!token)
+      console.log('File:', file.name, file.size, file.type)
+      console.log('Selected user:', selectedUser)
       
-      const response = await fetch(`${config.apiBaseUrl}/api/files/upload`, {
+      const response = await fetch(`${config.apiBaseUrl}/api/upload`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -574,23 +502,30 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
       if (response.ok) {
         const responseData = await response.json()
         console.log('File upload response data:', responseData)
-        const { fileUrl, fileName, fileSize, isImage } = responseData
+        
+        const { fileUrl, fileName, fileSize, fileType } = responseData
         
         console.log('About to send message with:', {
-          content: fileUrl,
-          type: file.type.startsWith('image/') ? 'image' : 'file',
+          content: `Sent a ${fileType}`,
+          type: fileType,
           fileName,
           fileSize,
           fileUrl
         })
         
-        // Use the file URL for the message
-        await sendMessage(fileUrl, file.type.startsWith('image/') ? 'image' : 'file', fileName, fileSize, fileUrl)
+        // Use the file URL for the message with proper type
+        await sendMessage(
+          `Sent a ${fileType}`, // Use descriptive content instead of URL
+          fileType, 
+          fileName, 
+          fileSize, 
+          fileUrl // Pass fileUrl separately
+        )
         toast.success('File uploaded successfully!')
       } else {
-        const errorText = await response.text()
-        console.error('File upload failed:', response.status, errorText)
-        toast.error(`Failed to upload file: ${response.status}`)
+        const errorData = await response.json().catch(() => ({ message: 'Upload failed' }))
+        console.error('File upload failed:', response.status, errorData)
+        toast.error(errorData.message || `Failed to upload file: ${response.status}`)
       }
     } catch (error) {
       console.error('File upload error:', error)
@@ -635,9 +570,9 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         setLocalCurrentUser(updatedUser)
         toast.success('Profile picture updated!')
       } else {
-        const errorText = await response.text()
-        console.error('Profile upload failed:', response.status, errorText)
-        toast.error(`Failed to upload profile picture: ${response.status}`)
+        const errorData = await response.json().catch(() => ({ message: 'Profile upload failed' }))
+        console.error('Profile upload failed:', response.status, errorData)
+        toast.error(errorData.message || `Failed to upload profile picture: ${response.status}`)
       }
     } catch (error) {
       console.error('Profile upload error:', error)
@@ -647,7 +582,47 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
     }
   }
 
-  const sendMessage = async (content: string, type: 'text' | 'file' | 'image' | 'gif' = 'text', fileName?: string, fileSize?: number, fileUrl?: string) => {
+  const handleUsernameChange = async () => {
+    if (!newUsername.trim() || newUsername.trim() === localCurrentUser.username) {
+      setShowUsernameModal(false)
+      setNewUsername('')
+      return
+    }
+
+    setIsChangingUsername(true)
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/profile/username`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ username: newUsername.trim() })
+      })
+
+      if (response.ok) {
+        const { username } = await response.json()
+        // Update local user state
+        const updatedUser = { ...localCurrentUser, username }
+        setLocalCurrentUser(updatedUser)
+        localStorage.setItem('user', JSON.stringify(updatedUser))
+        toast.success('Username updated successfully!')
+        setShowUsernameModal(false)
+        setNewUsername('')
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.message || 'Failed to update username')
+      }
+    } catch (error) {
+      console.error('Username change error:', error)
+      toast.error('Failed to update username')
+    } finally {
+      setIsChangingUsername(false)
+    }
+  }
+
+  const sendMessage = async (content: string, type: 'text' | 'file' | 'image' | 'video' | 'audio' | 'gif' = 'text', fileName?: string, fileSize?: number, fileUrl?: string) => {
     if (!selectedUser || !content.trim()) return
     
     try {
@@ -684,9 +659,9 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         setShowEmojiPicker(false)
         setShowGifSearch(false)
       } else {
-        const errorText = await response.text()
-        console.error('Send message failed:', response.status, errorText)
-        toast.error(`Failed to send message: ${response.status}`)
+        const errorData = await response.json().catch(() => ({ message: 'Send message failed' }))
+        console.error('Send message failed:', response.status, errorData)
+        toast.error(errorData.message || `Failed to send message: ${response.status}`)
       }
     } catch (error) {
       console.error('Send message error:', error)
@@ -767,7 +742,19 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
               />
             </div>
             <div>
-              <h2 className="font-semibold">{localCurrentUser.username}</h2>
+              <div className="flex items-center space-x-2">
+                <h2 className="font-semibold">{localCurrentUser.username}</h2>
+                <button
+                  onClick={() => {
+                    setNewUsername(localCurrentUser.username)
+                    setShowUsernameModal(true)
+                  }}
+                  className="p-1 hover:bg-secondary-100 rounded transition-colors"
+                  title="Change username"
+                >
+                  <Edit className="w-3 h-3 text-secondary-500" />
+                </button>
+              </div>
               <div className="flex items-center space-x-1">
                 <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 <span className="text-xs text-secondary-500">
@@ -896,7 +883,19 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
               </button>
             </div>
             <div>
-              <h2 className="font-semibold text-sm">{localCurrentUser.username}</h2>
+              <div className="flex items-center space-x-1">
+                <h2 className="font-semibold text-sm">{localCurrentUser.username}</h2>
+                <button
+                  onClick={() => {
+                    setNewUsername(localCurrentUser.username)
+                    setShowUsernameModal(true)
+                  }}
+                  className="p-0.5 hover:bg-secondary-100 rounded transition-colors"
+                  title="Change username"
+                >
+                  <Edit className="w-2.5 h-2.5 text-secondary-500" />
+                </button>
+              </div>
               <div className="flex items-center space-x-1">
                 <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 <span className="text-xs text-secondary-500">
@@ -1191,7 +1190,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                             className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                             onClick={() => window.open(getFullUrl(message.fileUrl || message.content), '_blank')}
                             onError={(e) => {
-                              console.log('Image failed to load:', message.fileUrl || message.content)
+                              console.log('❌ Image failed to load:', message.fileUrl || message.content)
                               e.currentTarget.style.display = 'none'
                               e.currentTarget.nextElementSibling?.classList.remove('hidden')
                             }}
@@ -1209,6 +1208,34 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                               Re-upload needed
                             </button>
                           </div>
+                        </div>
+                      )}
+                      
+                      {message.type === 'video' && (
+                        <div className="mb-2">
+                          <video 
+                            src={getFullUrl(message.fileUrl || message.content)} 
+                            controls
+                            className="max-w-full rounded-lg"
+                            preload="metadata"
+                          >
+                            Your browser does not support the video tag.
+                          </video>
+                          <p className="text-xs text-gray-500 mt-1">{message.fileName}</p>
+                        </div>
+                      )}
+                      
+                      {message.type === 'audio' && (
+                        <div className="mb-2">
+                          <audio 
+                            src={getFullUrl(message.fileUrl || message.content)} 
+                            controls
+                            className="w-full"
+                            preload="metadata"
+                          >
+                            Your browser does not support the audio tag.
+                          </audio>
+                          <p className="text-xs text-gray-500 mt-1">{message.fileName}</p>
                         </div>
                       )}
                       
@@ -1398,11 +1425,11 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
               </button>
               
               <input
-                ref={fileInputRef}
                 type="file"
+                ref={fileInputRef}
                 onChange={handleFileUpload}
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt"
                 className="hidden"
-                accept="image/*,.pdf,.doc,.docx,.txt,.zip,.rar"
               />
             </div>
             
@@ -1433,6 +1460,56 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
           </div>
         </div>
       </div>
+
+      {/* Username Change Modal */}
+      {showUsernameModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-4">Change Username</h3>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                New Username
+              </label>
+              <input
+                type="text"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter new username"
+                maxLength={20}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Username must be 3-20 characters long
+              </p>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowUsernameModal(false)
+                  setNewUsername('')
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUsernameChange}
+                disabled={!newUsername.trim() || newUsername.trim() === localCurrentUser.username || isChangingUsername}
+                className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isChangingUsername ? (
+                  <div className="flex items-center justify-center">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Updating...
+                  </div>
+                ) : (
+                  'Update Username'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

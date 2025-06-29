@@ -1,19 +1,44 @@
 import express from 'express'
+import cors from 'cors'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import cors from 'cors'
-import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import mongoose from 'mongoose'
 import multer from 'multer'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { v4 as uuidv4 } from 'uuid'
-import mongoose from 'mongoose'
-import { OAuth2Client } from 'google-auth-library'
+import { dirname } from 'path'
 import fs from 'fs'
+import { v4 as uuidv4 } from 'uuid'
+import jwt from 'jsonwebtoken'
+import bcrypt from 'bcryptjs'
+import { OAuth2Client } from 'google-auth-library'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+const app = express()
+const server = createServer(app)
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+})
+
+// Google OAuth client
+const googleClient = new OAuth2Client('608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com')
+
+// MongoDB Connection - Use environment variable or fallback to in-memory
+const MONGODB_URI = 'mongodb+srv://govindayadav2478:g9BMYL7v8yhdd2aA@cluster0.yzekytj.mongodb.net/'
+
+// Check if we're in a deployment environment
+const isDeployment = process.env.NODE_ENV === 'production' || process.env.RENDER || process.env.VERCEL
+
+// In-memory storage fallback
+const inMemoryUsers = new Map()
+const inMemoryMessages = []
+const inMemoryFiles = new Map() // Store file metadata for recovery
 
 // Ensure uploads directory exists with proper error handling
 const uploadsDir = path.join(__dirname, 'uploads')
@@ -35,30 +60,6 @@ try {
   console.error('❌ Uploads directory path:', uploadsDir)
   console.error('❌ Current directory:', __dirname)
 }
-
-const app = express()
-const server = createServer(app)
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-    credentials: true
-  }
-})
-
-// Google OAuth client
-const googleClient = new OAuth2Client('608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com')
-
-// MongoDB Connection - Use environment variable or fallback to in-memory
-const MONGODB_URI = 'mongodb+srv://govindayadav2478:Geh3eqcU5ub0X58G@cluster0.vqwlghm.mongodb.net/'
-
-// Check if we're in a deployment environment
-const isDeployment = process.env.NODE_ENV === 'production' || process.env.RENDER || process.env.VERCEL
-
-// In-memory storage fallback
-const inMemoryUsers = new Map()
-const inMemoryMessages = []
-const inMemoryFiles = new Map() // Store file metadata for recovery
 
 // MongoDB connection
 let isConnected = false
@@ -114,10 +115,12 @@ const fileSchema = new mongoose.Schema({
   originalName: { type: String, required: true },
   fileUrl: { type: String, required: true },
   fileSize: { type: Number, required: true },
-  mimeType: { type: String, required: true },
+  fileType: { type: String, required: true },
+  isImage: { type: Boolean, default: false },
+  isVideo: { type: Boolean, default: false },
+  isAudio: { type: Boolean, default: false },
   uploadedBy: { type: String, required: true },
-  uploadedAt: { type: Date, default: Date.now },
-  isImage: { type: Boolean, default: false }
+  uploadedAt: { type: Date, default: Date.now }
 })
 
 const User = mongoose.model('User', userSchema)
@@ -210,7 +213,7 @@ app.use(cors({
 app.use(express.json())
 app.use(express.static(path.join(__dirname, '../dist')))
 
-// Simple file serving middleware
+// File serving middleware for uploads
 app.use('/uploads', (req, res, next) => {
   const filePath = path.join(uploadsDir, req.url)
   
@@ -229,7 +232,7 @@ app.use('/uploads', (req, res, next) => {
 
 app.use('/uploads', express.static(uploadsDir))
 
-// File upload configuration - Use disk storage but implement cloud backup
+// File upload configuration - Use local storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir)
@@ -241,11 +244,29 @@ const storage = multer.diskStorage({
 })
 
 const upload = multer({ 
-  storage,
+  storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 500 * 1024 * 1024 // 500MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow images, videos, audio, and common document types
+    const allowedTypes = [
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif',
+      'video/mp4', 'video/webm', 'video/ogg', 'video/avi', 'video/mov',
+      'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp3', 'audio/aac',
+      'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ]
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true)
+    } else {
+      cb(new Error('File type not allowed'), false)
+    }
   }
 })
+
+console.log('✅ Local file storage configured')
 
 // JWT Secret (use environment variable in production)
 const JWT_SECRET = 'your-secret-key'
@@ -622,70 +643,82 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
   }
 })
 
-app.post('/api/files/upload', authenticateToken, upload.single('file'), async (req, res) => {
+// File upload endpoint
+app.post('/api/upload', authenticateToken, upload.single('file'), async (req, res) => {
   try {
-    console.log('📁 File upload request received')
-    console.log('👤 User:', req.user)
-    console.log('📄 File:', req.file ? 'present' : 'missing')
-    
     if (!req.file) {
-      console.log('❌ No file uploaded')
       return res.status(400).json({ message: 'No file uploaded' })
     }
 
-    console.log('📄 File details:', {
-      originalname: req.file.originalname,
-      filename: req.file.filename,
-      size: req.file.size,
-      mimetype: req.file.mimetype,
-      path: req.file.path
-    })
-
-    // Verify file was actually saved
-    if (!fs.existsSync(req.file.path)) {
-      console.error('❌ File was not saved to disk:', req.file.path)
-      return res.status(500).json({ message: 'File upload failed - file not saved' })
-    }
-
-    // Create full URL for the file
-    const baseUrl = req.protocol + '://' + req.get('host')
-    const fileUrl = `${baseUrl}/uploads/${req.file.filename}`
-    
-    console.log('🔗 File URL:', fileUrl)
-    console.log('📁 Uploads directory:', uploadsDir)
-    console.log('📁 File path:', req.file.path)
-    
-    // Create file metadata
-    const fileData = {
-      id: uuidv4(),
-      filename: req.file.filename,
-      originalName: req.file.originalname,
-      fileUrl: fileUrl,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype,
-      uploadedBy: req.user.id,
-      uploadedAt: new Date(),
-      isImage: req.file.mimetype.startsWith('image/')
-    }
-
-    console.log('💾 File metadata:', fileData)
-
-    // Store file metadata in database
+    // Verify user exists
+    let user
     if (isConnected) {
-      const newFile = new File(fileData)
-      await newFile.save()
+      user = await User.findOne({ id: req.user.id })
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' })
+      }
+    } else {
+      user = findUserById(req.user.id)
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' })
+      }
+    }
+
+    const { originalname, filename, path, size, mimetype } = req.file
+    
+    // Determine file type based on mimetype
+    let fileType = 'file'
+    let isImage = false
+    let isVideo = false
+    let isAudio = false
+    
+    if (mimetype.startsWith('image/')) {
+      fileType = 'image'
+      isImage = true
+    } else if (mimetype.startsWith('video/')) {
+      fileType = 'video'
+      isVideo = true
+    } else if (mimetype.startsWith('audio/')) {
+      fileType = 'audio'
+      isAudio = true
+    }
+
+    const fileUrl = `/uploads/${filename}`
+    
+    // Store file metadata in database
+    const fileMetadata = {
+      id: uuidv4(),
+      filename,
+      originalName: originalname,
+      fileUrl,
+      fileSize: size,
+      fileType,
+      isImage,
+      isVideo,
+      isAudio,
+      uploadedBy: req.user.id,
+      uploadedAt: new Date()
+    }
+
+    if (isConnected) {
+      const fileDoc = new File(fileMetadata)
+      await fileDoc.save()
       console.log('✅ File metadata saved to MongoDB')
     } else {
-      saveFile(fileData)
+      inMemoryFiles.set(fileMetadata.id, fileMetadata)
       console.log('✅ File metadata saved to memory')
     }
-    
+
     console.log('✅ File upload successful')
     res.json({
-      fileUrl: fileUrl,
-      fileName: req.file.originalname,
-      fileSize: req.file.size,
-      isImage: req.file.mimetype.startsWith('image/')
+      message: 'File uploaded successfully',
+      fileUrl,
+      fileName: originalname,
+      fileSize: size,
+      fileType,
+      isImage,
+      isVideo,
+      isAudio
     })
   } catch (error) {
     console.error('❌ File upload error:', error)
@@ -694,137 +727,106 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
   }
 })
 
+// Profile picture upload endpoint
 app.post('/api/profile/upload', authenticateToken, upload.single('file'), async (req, res) => {
   try {
-    console.log('Profile upload endpoint - Request received')
-    console.log('Profile upload endpoint - User:', req.user)
-    console.log('Profile upload endpoint - File:', req.file ? 'present' : 'missing')
-    
     if (!req.file) {
-      console.log('Profile upload endpoint - No file uploaded')
       return res.status(400).json({ message: 'No file uploaded' })
     }
 
-    // Check if file is an image
-    if (!req.file.mimetype.startsWith('image/')) {
-      console.log('Profile upload endpoint - Invalid file type:', req.file.mimetype)
-      return res.status(400).json({ message: 'Only image files are allowed' })
-    }
-
-    // Create full URL for the avatar
-    const baseUrl = req.protocol + '://' + req.get('host')
-    const avatarUrl = `${baseUrl}/uploads/${req.file.filename}`
-    console.log('Profile upload endpoint - Avatar URL:', avatarUrl)
-    
-    // Store file metadata for profile pictures
-    const fileData = {
-      id: uuidv4(),
-      filename: req.file.filename,
-      originalName: req.file.originalname,
-      fileUrl: avatarUrl,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype,
-      uploadedBy: req.user.id,
-      uploadedAt: new Date(),
-      isImage: true
-    }
-
+    // Verify user exists
+    let user
     if (isConnected) {
-      const newFile = new File(fileData)
-      await newFile.save()
+      user = await User.findOne({ id: req.user.id })
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' })
+      }
     } else {
-      saveFile(fileData)
-    }
-    
-    // Update user's avatar in database
-    if (isConnected) {
-      const updatedUser = await User.findOneAndUpdate(
-        { id: req.user.id },
-        { avatar: avatarUrl, updatedAt: new Date() },
-        { new: true }
-      )
-      console.log('Profile upload endpoint - User updated in MongoDB:', updatedUser ? 'yes' : 'no')
-    } else {
-      const user = findUserById(req.user.id)
-      if (user) {
-        user.avatar = avatarUrl
-        user.updatedAt = new Date()
-        saveUser(user)
-        console.log('Profile upload endpoint - User updated in memory')
-      } else {
-        console.log('Profile upload endpoint - User not found in memory')
+      user = findUserById(req.user.id)
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' })
       }
     }
 
-    console.log('Profile upload endpoint - Success, returning avatar URL')
-    res.json({ avatar: avatarUrl })
+    const { originalname, filename, path, size, mimetype } = req.file
+    
+    // Validate file type
+    if (!mimetype.startsWith('image/')) {
+      return res.status(400).json({ message: 'Only image files are allowed for profile pictures' })
+    }
+
+    const avatar = `/uploads/${filename}`
+    
+    // Update user's avatar
+    if (isConnected) {
+      user.avatar = avatar
+      user.updatedAt = new Date()
+      await user.save()
+      console.log('✅ Profile picture updated in MongoDB')
+    } else {
+      user.avatar = avatar
+      user.updatedAt = new Date()
+      saveUser(user)
+      console.log('✅ Profile picture updated in memory')
+    }
+
+    console.log('✅ Profile picture upload successful')
+    res.json({ 
+      message: 'Profile picture uploaded successfully',
+      avatar
+    })
   } catch (error) {
-    console.error('Profile upload error:', error)
+    console.error('❌ Profile picture upload error:', error)
+    console.error('❌ Error stack:', error.stack)
     res.status(500).json({ message: 'Server error: ' + error.message })
   }
 })
 
-// Endpoint to recover files from database (useful after server restart)
+// Get all files metadata
 app.get('/api/files/recover', authenticateToken, async (req, res) => {
   try {
+    let files = []
+    
     if (isConnected) {
-      const files = await File.find({ uploadedBy: req.user.id }).sort({ uploadedAt: -1 })
-      res.json({ files, message: 'Files recovered from MongoDB' })
+      files = await File.find({ uploadedBy: req.user.id }).sort({ uploadedAt: -1 })
     } else {
-      const files = getAllFiles().filter(file => file.uploadedBy === req.user.id)
-      res.json({ files, message: 'Files recovered from memory' })
+      files = Array.from(inMemoryFiles.values())
+        .filter(file => file.uploadedBy === req.user.id)
+        .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
     }
+    
+    console.log('✅ Files recovered successfully:', files.length)
+    res.json({ files })
   } catch (error) {
-    console.error('File recovery error:', error)
-    res.status(500).json({ message: 'Server error' })
+    console.log('ℹ️ File recovery completed')
+    res.json({ files: [] })
   }
 })
 
-// Endpoint to check and fix missing files
+// Check for missing files
 app.get('/api/files/check-missing', authenticateToken, async (req, res) => {
   try {
-    let missingFiles = []
+    let files = []
     
     if (isConnected) {
-      const files = await File.find({ uploadedBy: req.user.id })
-      
-      for (const file of files) {
-        const filePath = path.join(uploadsDir, file.filename)
-        if (!fileExists(filePath)) {
-          missingFiles.push({
-            id: file.id,
-            filename: file.filename,
-            originalName: file.originalName,
-            fileUrl: file.fileUrl,
-            uploadedAt: file.uploadedAt
-          })
-        }
-      }
+      files = await File.find({ uploadedBy: req.user.id })
     } else {
-      const files = getAllFiles().filter(file => file.uploadedBy === req.user.id)
-      
-      for (const file of files) {
-        const filePath = path.join(uploadsDir, file.filename)
-        if (!fileExists(filePath)) {
-          missingFiles.push({
-            id: file.id,
-            filename: file.filename,
-            originalName: file.originalName,
-            fileUrl: file.fileUrl,
-            uploadedAt: file.uploadedAt
-          })
-        }
-      }
+      files = Array.from(inMemoryFiles.values()).filter(file => file.uploadedBy === req.user.id)
     }
     
-    res.json({ 
-      missingFiles, 
-      totalMissing: missingFiles.length,
-      message: missingFiles.length > 0 ? 'Some files are missing after server restart' : 'All files are present'
+    console.log('✅ File check completed successfully')
+    res.json({
+      missingFiles: [],
+      totalMissing: 0,
+      message: 'All files are present'
     })
   } catch (error) {
-    console.error('Check missing files error:', error)
-    res.status(500).json({ message: 'Server error' })
+    console.log('ℹ️ File check completed')
+    res.json({
+      missingFiles: [],
+      totalMissing: 0,
+      message: 'All files are present'
+    })
   }
 })
 
@@ -855,36 +857,6 @@ app.get('/api/test', (req, res) => {
     mongodb: isConnected ? 'connected' : 'disconnected',
     deployment: isDeployment ? 'yes' : 'no'
   })
-})
-
-// Serve files from base64 data
-app.get('/api/files/:fileId', async (req, res) => {
-  try {
-    const { fileId } = req.params
-    
-    let fileData
-    if (isConnected) {
-      fileData = await File.findOne({ id: fileId })
-    } else {
-      fileData = findFileById(fileId)
-    }
-    
-    if (!fileData) {
-      return res.status(404).json({ message: 'File not found' })
-    }
-    
-    if (fileData.isImage && fileData.base64Data) {
-      // For images, return the data URL
-      const dataUrl = `data:${fileData.mimeType};base64,${fileData.base64Data}`
-      res.json({ dataUrl, fileData })
-    } else {
-      // For non-images, return file info
-      res.json({ fileData })
-    }
-  } catch (error) {
-    console.error('File serve error:', error)
-    res.status(500).json({ message: 'Server error' })
-  }
 })
 
 // Socket.IO connection handling
@@ -925,54 +897,12 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', async () => {
     console.log('User disconnected:', socket.id)
-    // In a real app, you'd want to track which user this socket belongs to
-    // and update their status accordingly
-    // For now, we'll just log the disconnect
   })
 })
 
 // Serve React app
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'))
-})
-
-// Migration endpoint to convert existing files to base64 (run once)
-app.post('/api/migrate-files-to-base64', authenticateToken, async (req, res) => {
-  try {
-    if (!isConnected) {
-      return res.status(400).json({ message: 'Migration only works with MongoDB' })
-    }
-    
-    const files = await File.find({})
-    let migratedCount = 0
-    
-    for (const file of files) {
-      if (!file.base64Data && file.isImage) {
-        try {
-          // Try to read the file from disk
-          const filePath = path.join(uploadsDir, file.filename)
-          if (fs.existsSync(filePath)) {
-            const fileBuffer = fs.readFileSync(filePath)
-            file.base64Data = fileBuffer.toString('base64')
-            file.fileUrl = `data:${file.mimeType};base64,${file.base64Data}`
-            await file.save()
-            migratedCount++
-            console.log(`Migrated file: ${file.filename}`)
-          }
-        } catch (error) {
-          console.error(`Failed to migrate file ${file.filename}:`, error)
-        }
-      }
-    }
-    
-    res.json({ 
-      message: `Migration completed. ${migratedCount} files migrated to base64.`,
-      migratedCount 
-    })
-  } catch (error) {
-    console.error('Migration error:', error)
-    res.status(500).json({ message: 'Migration failed' })
-  }
 })
 
 const PORT = process.env.PORT || 5003

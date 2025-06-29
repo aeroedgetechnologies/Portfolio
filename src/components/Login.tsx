@@ -31,6 +31,11 @@ export default function Login({ onLogin }: LoginProps) {
     email: '',
     password: ''
   })
+  const [errors, setErrors] = useState({
+    email: '',
+    password: '',
+    general: ''
+  })
   const [isLoading, setIsLoading] = useState(false)
   const [isGoogleLoading, setIsGoogleLoading] = useState(false)
 
@@ -79,9 +84,51 @@ export default function Login({ onLogin }: LoginProps) {
     }
   }, [])
 
+  // Clear errors when form data changes
+  const handleInputChange = (field: string, value: string) => {
+    setFormData({ ...formData, [field]: value })
+    // Clear field-specific error when user starts typing
+    if (errors[field as keyof typeof errors]) {
+      setErrors({ ...errors, [field]: '' })
+    }
+  }
+
+  // Validate form before submission
+  const validateForm = () => {
+    const newErrors = { email: '', password: '', general: '' }
+    let isValid = true
+
+    // Email validation
+    if (!formData.email) {
+      newErrors.email = 'Email is required'
+      isValid = false
+    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+      newErrors.email = 'Please enter a valid email address'
+      isValid = false
+    }
+
+    // Password validation
+    if (!formData.password) {
+      newErrors.password = 'Password is required'
+      isValid = false
+    } else if (formData.password.length < 6) {
+      newErrors.password = 'Password must be at least 6 characters'
+      isValid = false
+    }
+
+    setErrors(newErrors)
+    return isValid
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
+    setErrors({ email: '', password: '', general: '' }) // Clear previous errors
+
+    if (!validateForm()) {
+      setIsLoading(false)
+      return
+    }
 
     try {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register'
@@ -101,10 +148,25 @@ export default function Login({ onLogin }: LoginProps) {
         onLogin(data.user)
         toast.success(isLogin ? 'Login successful!' : 'Registration successful!')
       } else {
-        toast.error(data.message || 'Authentication failed')
+        // Handle specific error messages from backend
+        if (data.message === 'User not found') {
+          setErrors({ ...errors, email: 'No account found with this email address' })
+          toast.error('No account found with this email address')
+        } else if (data.message === 'Invalid password') {
+          setErrors({ ...errors, password: 'Incorrect password' })
+          toast.error('Incorrect password')
+        } else if (data.message === 'User already exists') {
+          setErrors({ ...errors, email: 'An account with this email already exists' })
+          toast.error('An account with this email already exists')
+        } else {
+          setErrors({ ...errors, general: data.message || 'Authentication failed' })
+          toast.error(data.message || 'Authentication failed')
+        }
       }
     } catch (error) {
-      toast.error('Network error. Please try again.')
+      console.error('Login error:', error)
+      setErrors({ ...errors, general: 'Network error. Please check your connection.' })
+      toast.error('Network error. Please check your connection.')
     } finally {
       setIsLoading(false)
     }
@@ -247,7 +309,7 @@ export default function Login({ onLogin }: LoginProps) {
                   <input
                     type="text"
                     value={formData.username}
-                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                    onChange={(e) => handleInputChange('username', e.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Enter your username"
                     required={!isLogin}
@@ -265,12 +327,17 @@ export default function Login({ onLogin }: LoginProps) {
                 <input
                   type="email"
                   value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onChange={(e) => handleInputChange('email', e.target.value)}
+                  className={`w-full pl-10 pr-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    errors.email ? 'border-red-500' : 'border-gray-300'
+                  }`}
                   placeholder="Enter your email"
                   required
                 />
               </div>
+              {errors.email && (
+                <p className="mt-1 text-sm text-red-600">{errors.email}</p>
+              )}
             </div>
 
             <div>
@@ -282,8 +349,10 @@ export default function Login({ onLogin }: LoginProps) {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onChange={(e) => handleInputChange('password', e.target.value)}
+                  className={`w-full pl-10 pr-12 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    errors.password ? 'border-red-500' : 'border-gray-300'
+                  }`}
                   placeholder="Enter your password"
                   required
                 />
@@ -295,7 +364,20 @@ export default function Login({ onLogin }: LoginProps) {
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
+              {errors.password && (
+                <p className="mt-1 text-sm text-red-600">{errors.password}</p>
+              )}
+              {!errors.password && !isLogin && (
+                <p className="mt-1 text-xs text-gray-500">Password must be at least 6 characters long</p>
+              )}
             </div>
+
+            {/* General error message */}
+            {errors.general && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-600">{errors.general}</p>
+              </div>
+            )}
 
             <button
               type="submit"
@@ -317,27 +399,12 @@ export default function Login({ onLogin }: LoginProps) {
             </div>
 
             <button
-              onClick={() => {
-                console.log('Google button clicked!')
-                alert('Google button clicked!') // Temporary test
-                handleGoogleLogin()
-              }}
+              onClick={handleGoogleLogin}
               disabled={isGoogleLoading}
               className="mt-4 w-full flex items-center justify-center space-x-2 bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Globe className="w-5 h-5" />
               <span>{isGoogleLoading ? 'Loading...' : 'Continue with Google'}</span>
-            </button>
-            
-            {/* Test button */}
-            <button
-              onClick={() => {
-                console.log('Test button clicked!')
-                alert('Test button works!')
-              }}
-              className="mt-2 w-full bg-red-500 text-white py-2 rounded"
-            >
-              Test Button
             </button>
           </div>
 
