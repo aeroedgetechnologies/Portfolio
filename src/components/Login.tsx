@@ -34,6 +34,28 @@ export default function Login({ onLogin }: LoginProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [isGoogleLoading, setIsGoogleLoading] = useState(false)
 
+  // Wait for Google OAuth to be available
+  const waitForGoogle = (): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      let attempts = 0
+      const maxAttempts = 50 // 5 seconds max wait
+      
+      const checkGoogle = () => {
+        attempts++
+        if (window.google && window.google.accounts && window.google.accounts.id) {
+          console.log('Google OAuth available after', attempts * 100, 'ms')
+          resolve(window.google)
+        } else if (attempts >= maxAttempts) {
+          reject(new Error('Google OAuth not available after 5 seconds'))
+        } else {
+          setTimeout(checkGoogle, 100)
+        }
+      }
+      
+      checkGoogle()
+    })
+  }
+
   // Load Google OAuth script
   useEffect(() => {
     const script = document.createElement('script')
@@ -92,11 +114,14 @@ export default function Login({ onLogin }: LoginProps) {
     setIsGoogleLoading(true)
     try {
       console.log('Starting Google OAuth login...')
+      console.log('Window google object:', window.google)
+      console.log('Google accounts:', window.google?.accounts)
+      console.log('Google accounts id:', window.google?.accounts?.id)
       
-      if (window.google && window.google.accounts && window.google.accounts.id) {
+      // Try to wait for Google OAuth
+      try {
+        const google = await waitForGoogle()
         console.log('Google OAuth library loaded, initializing...')
-        
-        const google = window.google as any
         
         google.accounts.id.initialize({
           client_id: '608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com',
@@ -134,11 +159,57 @@ export default function Login({ onLogin }: LoginProps) {
 
         console.log('Prompting Google OAuth...')
         google.accounts.id.prompt()
-      } else {
-        console.log('Google OAuth library not available, using redirect...')
-        // Fallback: redirect to Google OAuth
-        const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com&redirect_uri=${encodeURIComponent('http://govindayadavfolio.vercel.app/auth/google/callback')}&response_type=code&scope=email profile&access_type=offline`
-        window.location.href = googleAuthUrl
+      } catch (waitError) {
+        console.log('Google OAuth wait failed, trying direct approach...')
+        
+        // Direct approach - try to use Google OAuth if available
+        if (window.google && window.google.accounts && window.google.accounts.id) {
+          console.log('Google OAuth available directly, initializing...')
+          
+          const google = window.google as any
+          
+          google.accounts.id.initialize({
+            client_id: '608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com',
+            callback: async (response: any) => {
+              try {
+                console.log('Google OAuth response received (direct)')
+                const result = await fetch(`${config.apiBaseUrl}/api/auth/google`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ token: response.credential }),
+                })
+
+                console.log('Google auth response status:', result.status)
+                const data = await result.json()
+                console.log('Google auth response data:', data)
+
+                if (result.ok) {
+                  localStorage.setItem('token', data.token)
+                  localStorage.setItem('user', JSON.stringify(data.user))
+                  onLogin(data.user)
+                  toast.success('Google login successful!')
+                } else {
+                  toast.error(data.message || 'Google authentication failed')
+                }
+              } catch (error) {
+                console.error('Google auth error:', error)
+                toast.error('Google authentication error')
+              } finally {
+                setIsGoogleLoading(false)
+              }
+            }
+          })
+
+          console.log('Prompting Google OAuth (direct)...')
+          google.accounts.id.prompt()
+        } else {
+          console.log('Google OAuth not available, using redirect...')
+          // Fallback: redirect to Google OAuth
+          const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com&redirect_uri=${encodeURIComponent('http://govindayadavfolio.vercel.app/auth/google/callback')}&response_type=code&scope=email profile&access_type=offline`
+          window.location.href = googleAuthUrl
+        }
       }
     } catch (error) {
       console.error('Google login error:', error)
@@ -246,12 +317,27 @@ export default function Login({ onLogin }: LoginProps) {
             </div>
 
             <button
-              onClick={handleGoogleLogin}
+              onClick={() => {
+                console.log('Google button clicked!')
+                alert('Google button clicked!') // Temporary test
+                handleGoogleLogin()
+              }}
               disabled={isGoogleLoading}
               className="mt-4 w-full flex items-center justify-center space-x-2 bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Globe className="w-5 h-5" />
               <span>{isGoogleLoading ? 'Loading...' : 'Continue with Google'}</span>
+            </button>
+            
+            {/* Test button */}
+            <button
+              onClick={() => {
+                console.log('Test button clicked!')
+                alert('Test button works!')
+              }}
+              className="mt-2 w-full bg-red-500 text-white py-2 rounded"
+            >
+              Test Button
             </button>
           </div>
 

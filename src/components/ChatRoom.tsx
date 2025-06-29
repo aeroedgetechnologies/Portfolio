@@ -94,6 +94,34 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     return []
   }
 
+  // Function to check for missing files
+  const checkMissingFiles = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/files/check-missing`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      
+      if (response.ok) {
+        const { missingFiles, totalMissing, message } = await response.json()
+        console.log('Missing files check:', message, 'Total missing:', totalMissing)
+        
+        if (totalMissing > 0) {
+          toast.error(`${totalMissing} files are missing after server restart. You may need to re-upload them.`)
+          console.log('Missing files:', missingFiles)
+        }
+        
+        return missingFiles
+      }
+    } catch (error) {
+      console.error('Check missing files error:', error)
+    }
+    return []
+  }
+
   // Create notification sound
   const playNotificationSound = () => {
     if (!notificationsEnabled) return
@@ -165,6 +193,9 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     
     // Recover files from database (useful after server restart)
     recoverFiles()
+    
+    // Check for missing files after server restart
+    checkMissingFiles()
     
     // Request notification permission immediately
     if ('Notification' in window) {
@@ -1008,6 +1039,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                             className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                             onClick={() => window.open(getFullUrl(message.fileUrl || message.content), '_blank')}
                             onError={(e) => {
+                              console.log('Image failed to load:', message.fileUrl || message.content)
                               e.currentTarget.style.display = 'none'
                               e.currentTarget.nextElementSibling?.classList.remove('hidden')
                             }}
@@ -1015,7 +1047,15 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                           <div className="hidden p-4 bg-gray-100 rounded-lg text-center">
                             <Image className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                             <p className="text-sm text-gray-500">Image not available</p>
-                            <p className="text-xs text-gray-400">File may have been removed after server restart</p>
+                            <p className="text-xs text-gray-400">File was removed after server restart</p>
+                            <button 
+                              onClick={() => {
+                                toast.error('Please re-upload this image')
+                              }}
+                              className="mt-2 text-xs text-blue-500 hover:text-blue-600"
+                            >
+                              Re-upload needed
+                            </button>
                           </div>
                         </div>
                       )}
@@ -1121,23 +1161,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
           {/* Emoji Picker */}
           {showEmojiPicker && (
             <div className="absolute bottom-full left-3 sm:left-4 mb-2 z-50 emoji-picker bg-white border rounded-lg shadow-lg p-4">
-              <div className="mb-2 text-sm font-medium">Emoji Picker</div>
-              <div className="grid grid-cols-8 gap-1">
-                {['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰'].map((emoji, index) => (
-                  <button
-                    key={index}
-                    onClick={() => {
-                      console.log('Emoji clicked:', emoji)
-                      setMessageInput(prev => prev + emoji)
-                      setShowEmojiPicker(false)
-                    }}
-                    className="p-2 hover:bg-gray-100 rounded text-lg"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-2 text-xs text-gray-500">Simple emoji picker for testing</div>
+              <EmojiPicker onEmojiClick={handleEmojiClick} />
             </div>
           )}
           

@@ -163,6 +163,30 @@ const getAllFiles = () => {
   return Array.from(inMemoryFiles.values())
 }
 
+// Function to check if a file exists
+const fileExists = (filePath) => {
+  try {
+    return fs.existsSync(filePath)
+  } catch (error) {
+    return false
+  }
+}
+
+// Function to get file info from database and recreate if missing
+const getFileInfo = async (filename) => {
+  try {
+    if (isConnected) {
+      const fileDoc = await File.findOne({ filename })
+      return fileDoc
+    } else {
+      return findFileById(filename)
+    }
+  } catch (error) {
+    console.error('Error getting file info:', error)
+    return null
+  }
+}
+
 // Middleware
 app.use(cors({
   origin: "*",
@@ -170,6 +194,25 @@ app.use(cors({
 }))
 app.use(express.json())
 app.use(express.static(path.join(__dirname, '../dist')))
+
+// Custom middleware to handle missing files
+app.use('/uploads', (req, res, next) => {
+  const filePath = path.join(uploadsDir, req.url)
+  
+  if (!fileExists(filePath)) {
+    console.log('File not found:', req.url)
+    // Return a placeholder image or error response
+    res.status(404).json({ 
+      error: 'File not found', 
+      message: 'This file may have been removed after server restart',
+      filename: req.url 
+    })
+    return
+  }
+  
+  next()
+})
+
 app.use('/uploads', express.static(uploadsDir))
 
 // File upload configuration
@@ -678,6 +721,54 @@ app.get('/api/files/recover', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     console.error('File recovery error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Endpoint to check and fix missing files
+app.get('/api/files/check-missing', authenticateToken, async (req, res) => {
+  try {
+    let missingFiles = []
+    
+    if (isConnected) {
+      const files = await File.find({ uploadedBy: req.user.id })
+      
+      for (const file of files) {
+        const filePath = path.join(uploadsDir, file.filename)
+        if (!fileExists(filePath)) {
+          missingFiles.push({
+            id: file.id,
+            filename: file.filename,
+            originalName: file.originalName,
+            fileUrl: file.fileUrl,
+            uploadedAt: file.uploadedAt
+          })
+        }
+      }
+    } else {
+      const files = getAllFiles().filter(file => file.uploadedBy === req.user.id)
+      
+      for (const file of files) {
+        const filePath = path.join(uploadsDir, file.filename)
+        if (!fileExists(filePath)) {
+          missingFiles.push({
+            id: file.id,
+            filename: file.filename,
+            originalName: file.originalName,
+            fileUrl: file.fileUrl,
+            uploadedAt: file.uploadedAt
+          })
+        }
+      }
+    }
+    
+    res.json({ 
+      missingFiles, 
+      totalMissing: missingFiles.length,
+      message: missingFiles.length > 0 ? 'Some files are missing after server restart' : 'All files are present'
+    })
+  } catch (error) {
+    console.error('Check missing files error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })

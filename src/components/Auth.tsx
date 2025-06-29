@@ -1,8 +1,22 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, User, Globe } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { config } from '../config'
+
+// Google OAuth types
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: any) => void
+          prompt: () => void
+        }
+      }
+    }
+  }
+}
 
 interface AuthProps {
   onLogin: (userData: any) => void
@@ -17,6 +31,30 @@ export default function Auth({ onLogin }: AuthProps) {
     password: ''
   })
   const [isLoading, setIsLoading] = useState(false)
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false)
+
+  // Load Google OAuth script
+  useEffect(() => {
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = () => {
+      console.log('Google OAuth script loaded')
+    }
+    script.onerror = () => {
+      console.error('Failed to load Google OAuth script')
+    }
+    document.head.appendChild(script)
+
+    return () => {
+      // Cleanup script if component unmounts
+      const existingScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]')
+      if (existingScript) {
+        existingScript.remove()
+      }
+    }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -50,8 +88,63 @@ export default function Auth({ onLogin }: AuthProps) {
   }
 
   const handleGoogleLogin = async () => {
-    // Google OAuth implementation would go here
-    toast.success('Google OAuth integration coming soon!')
+    setIsGoogleLoading(true)
+    try {
+      console.log('Starting Google OAuth login...')
+      
+      // Simple approach - check if Google OAuth is available
+      if (window.google && window.google.accounts && window.google.accounts.id) {
+        console.log('Google OAuth available, initializing...')
+        
+        const google = window.google as any
+        
+        google.accounts.id.initialize({
+          client_id: '608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com',
+          callback: async (response: any) => {
+            try {
+              console.log('Google OAuth response received')
+              const result = await fetch(`${config.apiBaseUrl}/api/auth/google`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ token: response.credential }),
+              })
+
+              console.log('Google auth response status:', result.status)
+              const data = await result.json()
+              console.log('Google auth response data:', data)
+
+              if (result.ok) {
+                localStorage.setItem('token', data.token)
+                localStorage.setItem('user', JSON.stringify(data.user))
+                onLogin(data.user)
+                toast.success('Google login successful!')
+              } else {
+                toast.error(data.message || 'Google authentication failed')
+              }
+            } catch (error) {
+              console.error('Google auth error:', error)
+              toast.error('Google authentication error')
+            } finally {
+              setIsGoogleLoading(false)
+            }
+          }
+        })
+
+        console.log('Prompting Google OAuth...')
+        google.accounts.id.prompt()
+      } else {
+        console.log('Google OAuth not available, using redirect...')
+        // Fallback: redirect to Google OAuth
+        const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com&redirect_uri=${encodeURIComponent('http://govindayadavfolio.vercel.app/auth/google/callback')}&response_type=code&scope=email profile&access_type=offline`
+        window.location.href = googleAuthUrl
+      }
+    } catch (error) {
+      console.error('Google login error:', error)
+      toast.error('Google login failed')
+      setIsGoogleLoading(false)
+    }
   }
 
   return (
@@ -153,11 +246,15 @@ export default function Auth({ onLogin }: AuthProps) {
             </div>
 
             <button
-              onClick={handleGoogleLogin}
-              className="mt-4 w-full flex items-center justify-center space-x-2 bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+              onClick={() => {
+                console.log('Google button clicked!')
+                handleGoogleLogin()
+              }}
+              disabled={isGoogleLoading}
+              className="mt-4 w-full flex items-center justify-center space-x-2 bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Globe className="w-5 h-5" />
-              <span>Google</span>
+              <span>{isGoogleLoading ? 'Loading...' : 'Continue with Google'}</span>
             </button>
           </div>
 
