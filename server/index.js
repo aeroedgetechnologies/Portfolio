@@ -938,6 +938,12 @@ app.post('/api/friend-requests', authenticateToken, async (req, res) => {
       saveFriendRequest(friendRequest)
     }
 
+    // Emit friend request event to receiver
+    io.emit('friend-request:received', {
+      ...friendRequest,
+      sender: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
+    })
+
     res.json({ message: 'Friend request sent successfully', request: friendRequest })
   } catch (error) {
     console.error('Send friend request error:', error)
@@ -1002,8 +1008,18 @@ app.put('/api/friend-requests/:requestId', authenticateToken, async (req, res) =
 
     if (action === 'accept') {
       request.status = 'accepted'
+      // Emit friend request accepted event to sender
+      io.emit('friend-request:accepted', {
+        ...request,
+        receiver: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
+      })
     } else if (action === 'decline') {
       request.status = 'declined'
+      // Emit friend request declined event to sender
+      io.emit('friend-request:declined', {
+        ...request,
+        receiver: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
+      })
     } else {
       return res.status(400).json({ message: 'Invalid action' })
     }
@@ -1040,6 +1056,12 @@ app.delete('/api/friend-requests/:requestId', authenticateToken, async (req, res
     if (!request) {
       return res.status(404).json({ message: 'Friend request not found' })
     }
+
+    // Emit friend request cancelled event to receiver
+    io.emit('friend-request:cancelled', {
+      ...request,
+      sender: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
+    })
 
     if (isConnected) {
       await FriendRequest.deleteOne({ id: requestId })

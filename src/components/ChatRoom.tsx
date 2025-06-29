@@ -78,6 +78,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([])
   const [sentRequests, setSentRequests] = useState<FriendRequest[]>([])
   const [showFriendRequests, setShowFriendRequests] = useState(false)
+  const [showFriendRequestsSection, setShowFriendRequestsSection] = useState(true)
   const [friendStatus, setFriendStatus] = useState<{[key: string]: 'none' | 'pending' | 'sent' | 'friends'}>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -309,6 +310,133 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
       setTypingUsers(prev => prev.filter(username => username !== userData.username))
     })
 
+    // Friend request notifications
+    newSocket.on('friend-request:received', (request: FriendRequest) => {
+      console.log('Friend request received:', request)
+      
+      // Only show this notification and add to list if YOU are the receiver
+      if (request.receiverId === currentUser.id) {
+        toast.success(`Friend request from ${request.sender?.username || 'Unknown User'}!`, {
+          duration: 5000,
+          position: 'top-right'
+        })
+        playNotificationSound()
+        // Show the friend requests section if it's hidden
+        setShowFriendRequestsSection(true)
+        // Immediately add the new request to the list (prevent duplicates)
+        setFriendRequests(prev => {
+          const exists = prev.some(req => req.id === request.id || 
+            (req.senderId === request.senderId && req.receiverId === request.receiverId))
+          if (!exists) {
+            return [...prev, request]
+          }
+          return prev
+        })
+      }
+    })
+
+    newSocket.on('friend-request:accepted', (request: FriendRequest) => {
+      console.log('Friend request accepted:', request)
+      
+      // If YOU are the sender and someone accepted your request
+      if (request.senderId === currentUser.id) {
+        toast.success(`Friend request accepted by ${request.receiver?.username || 'Unknown User'}!`, {
+          duration: 3000,
+          position: 'top-right'
+        })
+        // Update friend status immediately
+        setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'friends' }))
+        // Remove from sent requests list
+        setSentRequests(prev => prev.filter(req => req.id !== request.id))
+      }
+      // If YOU are the receiver and you accepted someone's request
+      else if (request.receiverId === currentUser.id) {
+        toast.success('Friend request accepted!')
+        // Update friend status immediately
+        setFriendStatus(prev => ({ ...prev, [request.senderId]: 'friends' }))
+        // Remove from friend requests list
+        setFriendRequests(prev => prev.filter(req => req.id !== request.id))
+      }
+    })
+
+    newSocket.on('friend-request:declined', (request: FriendRequest) => {
+      console.log('Friend request declined:', request)
+      
+      // If YOU are the sender and someone declined your request
+      if (request.senderId === currentUser.id) {
+        toast.error(`Friend request declined by ${request.receiver?.username || 'Unknown User'}`, {
+          duration: 3000,
+          position: 'top-right'
+        })
+        // Update friend status immediately
+        setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'none' }))
+        // Remove from sent requests list
+        setSentRequests(prev => prev.filter(req => req.id !== request.id))
+      }
+      // If YOU are the receiver and you declined someone's request
+      else if (request.receiverId === currentUser.id) {
+        toast.success('Friend request declined')
+        // Remove from friend requests list
+        setFriendRequests(prev => prev.filter(req => req.id !== request.id))
+      }
+    })
+
+    newSocket.on('friend-request:cancelled', (request: FriendRequest) => {
+      console.log('Friend request cancelled:', request)
+      
+      // If YOU are the sender and you cancelled your request
+      if (request.senderId === currentUser.id) {
+        toast.success('Friend request cancelled')
+        // Update friend status immediately
+        setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'none' }))
+        // Remove from sent requests list
+        setSentRequests(prev => prev.filter(req => req.id !== request.id))
+      }
+      // If YOU are the receiver and someone cancelled their request to you
+      else if (request.receiverId === currentUser.id) {
+        toast.error('Friend request was cancelled by sender')
+        // Remove from friend requests list
+        setFriendRequests(prev => prev.filter(req => req.id !== request.id))
+      }
+    })
+
+    // Handle when you send a friend request
+    newSocket.on('friend-request:sent', (request: FriendRequest) => {
+      console.log('Friend request sent:', request)
+      
+      // If YOU are the sender, update your sent requests list
+      if (request.senderId === currentUser.id) {
+        setSentRequests(prev => {
+          const exists = prev.some(req => req.id === request.id || req.receiverId === request.receiverId)
+          if (!exists) {
+            return [...prev, request]
+          }
+          return prev
+        })
+        // Update friend status
+        setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'sent' }))
+      }
+      // If YOU are the receiver, add to your friend requests list
+      else if (request.receiverId === currentUser.id) {
+        setFriendRequests(prev => {
+          const exists = prev.some(req => req.id === request.id || 
+            (req.senderId === request.senderId && req.receiverId === request.receiverId))
+          if (!exists) {
+            return [...prev, request]
+          }
+          return prev
+        })
+        // Show the friend requests section if it's hidden
+        setShowFriendRequestsSection(true)
+        // Show notification
+        toast.success(`Friend request from ${request.sender?.username || 'Unknown User'}!`, {
+          duration: 5000,
+          position: 'top-right'
+        })
+        playNotificationSound()
+      }
+    })
+
     return () => {
       newSocket.close()
     }
@@ -318,6 +446,13 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
     fetchMessages()
     fetchUsers()
     fetchFriendRequests()
+    
+    // Set up periodic refresh for friend requests
+    const interval = setInterval(() => {
+      fetchFriendRequests()
+    }, 30000) // Refresh every 30 seconds
+    
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
@@ -760,6 +895,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   // Friend request functions
   const fetchFriendRequests = async () => {
     try {
+      console.log('Fetching friend requests...')
       const token = localStorage.getItem('token')
       const [receivedResponse, sentResponse] = await Promise.all([
         fetch(`${config.apiBaseUrl}/api/friend-requests/received`, {
@@ -770,22 +906,43 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         })
       ])
 
+      console.log('Received requests response:', receivedResponse.status, receivedResponse.ok)
+      console.log('Sent requests response:', sentResponse.status, sentResponse.ok)
+
       if (receivedResponse.ok) {
         const { requests } = await receivedResponse.json()
+        console.log('Received friend requests:', requests)
         setFriendRequests(requests)
+      } else {
+        console.error('Failed to fetch received requests:', receivedResponse.status)
       }
 
       if (sentResponse.ok) {
         const { requests } = await sentResponse.json()
+        console.log('Sent friend requests:', requests)
         setSentRequests(requests)
+        
+        // Update friend status for sent requests
+        requests.forEach((request: FriendRequest) => {
+          setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'sent' }))
+        })
+      } else {
+        console.error('Failed to fetch sent requests:', sentResponse.status)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Fetch friend requests error:', error)
     }
   }
 
   const sendFriendRequest = async (receiverId: string) => {
     try {
+      // Check if we already have a pending request to this user
+      const existingRequest = sentRequests.find(req => req.receiverId === receiverId)
+      if (existingRequest) {
+        toast.error('Friend request already sent to this user')
+        return
+      }
+
       const token = localStorage.getItem('token')
       const response = await fetch(`${config.apiBaseUrl}/api/friend-requests`, {
         method: 'POST',
@@ -795,17 +952,34 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         },
         body: JSON.stringify({ receiverId })
       })
-
+      
       if (response.ok) {
+        const request = await response.json()
+        console.log('Friend request sent successfully:', request)
         toast.success('Friend request sent!')
+        
+        // Immediately update friend status
         setFriendStatus(prev => ({ ...prev, [receiverId]: 'sent' }))
-        fetchFriendRequests()
+        
+        // Add to sent requests list (prevent duplicates)
+        setSentRequests(prev => {
+          const exists = prev.some(req => req.id === request.id || req.receiverId === receiverId)
+          if (!exists) {
+            return [...prev, request]
+          }
+          return prev
+        })
+        
+        // Emit socket event for real-time updates
+        if (socket) {
+          socket.emit('friend-request:sent', request)
+        }
       } else {
-        const errorData = await response.json()
-        toast.error(errorData.message || 'Failed to send friend request')
+        const error = await response.json()
+        toast.error(error.message || 'Failed to send friend request')
       }
     } catch (error) {
-      console.error('Send friend request error:', error)
+      console.error('Error sending friend request:', error)
       toast.error('Failed to send friend request')
     }
   }
@@ -821,21 +995,32 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         },
         body: JSON.stringify({ action: 'accept' })
       })
-
+      
       if (response.ok) {
+        const result = await response.json()
+        console.log('Friend request accepted:', result)
         toast.success('Friend request accepted!')
-        fetchFriendRequests()
-        // Update friend status for the sender
+        
+        // Find the request to get the sender ID
         const request = friendRequests.find(req => req.id === requestId)
         if (request) {
+          // Immediately update friend status
           setFriendStatus(prev => ({ ...prev, [request.senderId]: 'friends' }))
+          
+          // Remove from friend requests list
+          setFriendRequests(prev => prev.filter(req => req.id !== requestId))
+          
+          // Emit socket event for real-time updates
+          if (socket) {
+            socket.emit('friend-request:accepted', result)
+          }
         }
       } else {
-        const errorData = await response.json()
-        toast.error(errorData.message || 'Failed to accept friend request')
+        const error = await response.json()
+        toast.error(error.message || 'Failed to accept friend request')
       }
     } catch (error) {
-      console.error('Accept friend request error:', error)
+      console.error('Error accepting friend request:', error)
       toast.error('Failed to accept friend request')
     }
   }
@@ -851,46 +1036,81 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         },
         body: JSON.stringify({ action: 'decline' })
       })
-
+      
       if (response.ok) {
+        const result = await response.json()
+        console.log('Friend request declined:', result)
         toast.success('Friend request declined')
-        fetchFriendRequests()
+        
+        // Find the request to get the sender ID
+        const request = friendRequests.find(req => req.id === requestId)
+        if (request) {
+          // Immediately update friend status
+          setFriendStatus(prev => ({ ...prev, [request.senderId]: 'none' }))
+          
+          // Remove from friend requests list
+          setFriendRequests(prev => prev.filter(req => req.id !== requestId))
+          
+          // Emit socket event for real-time updates
+          if (socket) {
+            socket.emit('friend-request:declined', result)
+          }
+        }
       } else {
-        const errorData = await response.json()
-        toast.error(errorData.message || 'Failed to decline friend request')
+        const error = await response.json()
+        toast.error(error.message || 'Failed to decline friend request')
       }
     } catch (error) {
-      console.error('Decline friend request error:', error)
+      console.error('Error declining friend request:', error)
       toast.error('Failed to decline friend request')
     }
   }
 
   const cancelFriendRequest = async (requestId: string) => {
     try {
+      console.log('cancelFriendRequest called with ID:', requestId)
       const token = localStorage.getItem('token')
+      console.log('Making DELETE request to:', `${config.apiBaseUrl}/api/friend-requests/${requestId}`)
+      
       const response = await fetch(`${config.apiBaseUrl}/api/friend-requests/${requestId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       })
 
+      console.log('Response status:', response.status)
+      console.log('Response ok:', response.ok)
+
       if (response.ok) {
+        const result = await response.json()
+        console.log('Friend request cancelled:', result)
         toast.success('Friend request cancelled')
-        fetchFriendRequests()
-        // Update friend status
+        
+        // Find the request to get the receiver ID
         const request = sentRequests.find(req => req.id === requestId)
+        console.log('Found request in sentRequests:', request)
         if (request) {
+          // Immediately update friend status
           setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'none' }))
+          
+          // Remove from sent requests list
+          setSentRequests(prev => prev.filter(req => req.id !== requestId))
+          
+          // Emit socket event for real-time updates
+          if (socket) {
+            socket.emit('friend-request:cancelled', result)
+          }
         }
       } else {
-        const errorData = await response.json()
-        toast.error(errorData.message || 'Failed to cancel friend request')
+        const error = await response.json()
+        toast.error(error.message || 'Failed to cancel friend request')
       }
     } catch (error) {
-      console.error('Cancel friend request error:', error)
+      console.error('Error cancelling friend request:', error)
       toast.error('Failed to cancel friend request')
     }
   }
 
+  // Update: Check for any messages between the two users
   const checkFriendStatus = async (userId: string) => {
     try {
       const token = localStorage.getItem('token')
@@ -898,17 +1118,44 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         headers: { 'Authorization': `Bearer ${token}` }
       })
 
+      let areFriends = false
       if (response.ok) {
-        const { areFriends } = await response.json()
-        setFriendStatus(prev => ({ 
-          ...prev, 
-          [userId]: areFriends ? 'friends' : 'none' 
-        }))
+        const data = await response.json()
+        areFriends = data.areFriends
       }
-    } catch (error) {
+
+      // Check for any messages between the two users using the existing endpoint
+      const messagesResponse = await fetch(`${config.apiBaseUrl}/api/messages?receiverId=${userId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      let hasSharedMessages = false
+      if (messagesResponse.ok) {
+        const messages = await messagesResponse.json()
+        hasSharedMessages = messages.length > 0
+        console.log(`Messages between current user and ${userId}:`, messages.length)
+      }
+
+      // Users are friends if they have an accepted friend request OR if they have shared messages
+      const isFriends = areFriends || hasSharedMessages
+      console.log(`Friend status for ${userId}:`, { areFriends, hasSharedMessages, isFriends })
+      
+      setFriendStatus(prev => ({ 
+        ...prev, 
+        [userId]: isFriends ? 'friends' : 'none' 
+      }))
+    } catch (error: any) {
       console.error('Check friend status error:', error)
     }
   }
+
+  // Call checkFriendStatus for all users when users list changes
+  useEffect(() => {
+    users.forEach(user => {
+      if (user.id !== localCurrentUser.id) {
+        checkFriendStatus(user.id)
+      }
+    })
+  }, [users])
 
   return (
     <div className="flex flex-col h-screen bg-secondary-50 md:flex-row">
@@ -1050,11 +1297,12 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                             {unreadMessages[user.id]}
                           </span>
                         )}
-                        {/* Friend Request Button */}
-                        {friendStatus[user.id] === 'none' && (
+                        {/* Friend Request Button - Show for users who are not friends and haven't sent requests */}
+                        {(!friendStatus[user.id] || friendStatus[user.id] === 'none') && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
+                              console.log('Sending friend request to:', user.id)
                               sendFriendRequest(user.id)
                             }}
                             className="p-1.5 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
@@ -1067,9 +1315,16 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
+                              console.log('Cancel button clicked for user:', user.id)
+                              console.log('Current sentRequests:', sentRequests)
                               const request = sentRequests.find(req => req.receiverId === user.id)
+                              console.log('Found request:', request)
                               if (request) {
+                                console.log('Cancelling request with ID:', request.id)
                                 cancelFriendRequest(request.id)
+                              } else {
+                                console.error('No request found for user:', user.id)
+                                toast.error('Could not find friend request to cancel')
                               }
                             }}
                             className="p-1.5 text-orange-500 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
@@ -1092,57 +1347,111 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
           </div>
         </div>
         
-        {/* Friend Requests Section */}
-        {friendRequests.length > 0 && (
+        {/* Friend Requests Section - Toggleable */}
+        {showFriendRequestsSection && (
           <div className="border-t border-secondary-200 p-4">
-            <h3 className="text-sm font-semibold text-secondary-600 mb-3 flex items-center">
-              <Users className="w-4 h-4 mr-2" />
-              Friend Requests ({friendRequests.length})
-            </h3>
-            <div className="space-y-2">
-              {friendRequests.map((request) => (
-                <motion.div
-                  key={request.id}
-                  className="p-3 rounded-lg bg-blue-50 border border-blue-200"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-secondary-600 flex items-center">
+                <Users className="w-4 h-4 mr-2" />
+                Friend Requests ({friendRequests.length})
+              </h3>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => {
+                    console.log('Refreshing friend requests...')
+                    fetchFriendRequests()
+                  }}
+                  className="p-1 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                  title="Refresh friend requests"
                 >
-                  <div className="flex items-center space-x-3 mb-2">
-                    {request.sender?.avatar ? (
-                      <img 
-                        src={getFullUrl(request.sender.avatar)} 
-                        alt={request.sender.username}
-                        className="w-8 h-8 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
-                        <span className="text-white text-sm font-semibold">
-                          {request.sender?.username?.[0]?.toUpperCase() || 'U'}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">{request.sender?.username || 'Unknown User'}</p>
-                      <p className="text-xs text-secondary-500">Wants to be your friend</p>
-                    </div>
-                  </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => acceptFriendRequest(request.id)}
-                      className="flex-1 px-3 py-1.5 bg-green-500 text-white text-xs rounded-lg hover:bg-green-600 transition-colors"
-                    >
-                      Accept
-                    </button>
-                    <button
-                      onClick={() => declineFriendRequest(request.id)}
-                      className="flex-1 px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 transition-colors"
-                    >
-                      Decline
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
+                  <span className="text-xs">🔄</span>
+                </button>
+                <button
+                  onClick={() => setShowFriendRequestsSection(false)}
+                  className="p-1 text-gray-500 hover:text-gray-600 hover:bg-gray-50 rounded transition-colors"
+                  title="Hide friend requests"
+                >
+                  <span className="text-xs">−</span>
+                </button>
+              </div>
             </div>
+            
+            {friendRequests.length === 0 ? (
+              <div className="text-center py-4 text-gray-500">
+                <p className="text-sm">No pending friend requests</p>
+                <p className="text-xs mt-1">Send friend requests to other users to start chatting!</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {friendRequests.map((request) => (
+                  <motion.div
+                    key={request.id}
+                    className="p-3 rounded-lg bg-blue-50 border border-blue-200"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                  >
+                    <div className="flex items-center space-x-3 mb-2">
+                      {request.sender?.avatar ? (
+                        <img 
+                          src={getFullUrl(request.sender.avatar)} 
+                          alt={request.sender.username}
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
+                          <span className="text-white text-sm font-semibold">
+                            {request.sender?.username?.[0]?.toUpperCase() || 'U'}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate">{request.sender?.username || 'Unknown User'}</p>
+                        <p className="text-xs text-secondary-500">Wants to be your friend</p>
+                      </div>
+                    </div>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => {
+                          console.log('Accepting friend request:', request.id)
+                          acceptFriendRequest(request.id)
+                        }}
+                        className="flex-1 px-3 py-1.5 bg-green-500 text-white text-xs rounded-lg hover:bg-green-600 transition-colors"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={() => {
+                          console.log('Declining friend request:', request.id)
+                          declineFriendRequest(request.id)
+                        }}
+                        className="flex-1 px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 transition-colors"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Show Friend Requests Button - When section is hidden */}
+        {!showFriendRequestsSection && (
+          <div className="border-t border-secondary-200 p-4">
+            <button
+              onClick={() => setShowFriendRequestsSection(true)}
+              className="w-full flex items-center justify-center space-x-2 p-2 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              title="Show friend requests"
+            >
+              <Users className="w-4 h-4" />
+              <span className="text-sm">Show Friend Requests</span>
+              {friendRequests.length > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full min-w-[20px] text-center">
+                  {friendRequests.length}
+                </span>
+              )}
+            </button>
           </div>
         )}
       </div>
@@ -1303,11 +1612,12 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                           {unreadMessages[user.id]}
                         </span>
                       )}
-                      {/* Friend Request Button */}
-                      {friendStatus[user.id] === 'none' && (
+                      {/* Friend Request Button - Show for users who are not friends and haven't sent requests */}
+                      {(!friendStatus[user.id] || friendStatus[user.id] === 'none') && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
+                            console.log('Sending friend request to:', user.id)
                             sendFriendRequest(user.id)
                           }}
                           className="p-1.5 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
@@ -1320,9 +1630,16 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
+                            console.log('Cancel button clicked for user:', user.id)
+                            console.log('Current sentRequests:', sentRequests)
                             const request = sentRequests.find(req => req.receiverId === user.id)
+                            console.log('Found request:', request)
                             if (request) {
+                              console.log('Cancelling request with ID:', request.id)
                               cancelFriendRequest(request.id)
+                            } else {
+                              console.error('No request found for user:', user.id)
+                              toast.error('Could not find friend request to cancel')
                             }
                           }}
                           className="p-1.5 text-orange-500 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
@@ -1445,7 +1762,18 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                   </span>
                 </div>
                 <div>
-                  <h3 className="font-semibold">{selectedUser.username}</h3>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="font-semibold">{selectedUser.username}</h3>
+                    {friendStatus[selectedUser.id] === 'friends' && (
+                      <span className="text-green-500 text-sm">✓ Friends</span>
+                    )}
+                    {friendStatus[selectedUser.id] === 'sent' && (
+                      <span className="text-orange-500 text-sm">⏳ Request Sent</span>
+                    )}
+                    {friendStatus[selectedUser.id] === 'none' && (
+                      <span className="text-gray-500 text-sm">Send friend request to chat</span>
+                    )}
+                  </div>
                   <p className="text-sm text-secondary-500">{selectedUser.email}</p>
                 </div>
               </div>
@@ -1726,8 +2054,15 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                   setShowEmojiPicker(!showEmojiPicker)
                   setShowGifSearch(false) // Close GIF search when opening emoji picker
                 }}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Add emoji"
+                disabled={!selectedUser || friendStatus[selectedUser.id] !== 'friends'}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                title={
+                  !selectedUser 
+                    ? 'Select a user to add emoji' 
+                    : friendStatus[selectedUser.id] !== 'friends'
+                    ? 'Send friend request first'
+                    : 'Add emoji'
+                }
               >
                 <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
@@ -1738,8 +2073,15 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                   setShowGifSearch(!showGifSearch)
                   setShowEmojiPicker(false) // Close emoji picker when opening GIF search
                 }}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Search GIFs"
+                disabled={!selectedUser || friendStatus[selectedUser.id] !== 'friends'}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                title={
+                  !selectedUser 
+                    ? 'Select a user to search GIFs' 
+                    : friendStatus[selectedUser.id] !== 'friends'
+                    ? 'Send friend request first'
+                    : 'Search GIFs'
+                }
               >
                 <Image className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
@@ -1751,9 +2093,15 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                   console.log('isUploading:', isUploading)
                   fileInputRef.current?.click()
                 }}
-                disabled={isUploading}
+                disabled={isUploading || !selectedUser || friendStatus[selectedUser.id] !== 'friends'}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
-                title="Upload file"
+                title={
+                  !selectedUser 
+                    ? 'Select a user to upload file' 
+                    : friendStatus[selectedUser.id] !== 'friends'
+                    ? 'Send friend request first'
+                    : 'Upload file'
+                }
               >
                 {isUploading ? (
                   <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin"></div>
@@ -1780,19 +2128,35 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                 }}
                 onKeyPress={handleKeyPress}
                 onBlur={() => handleTyping(false)}
-                placeholder={selectedUser ? `Message ${selectedUser.username}...` : 'Select a user to start chatting...'}
+                placeholder={
+                  !selectedUser 
+                    ? 'Select a user to start chatting...' 
+                    : friendStatus[selectedUser.id] === 'friends'
+                    ? `Message ${selectedUser.username}...`
+                    : friendStatus[selectedUser.id] === 'sent'
+                    ? `Friend request sent to ${selectedUser.username}. Waiting for response...`
+                    : friendStatus[selectedUser.id] === 'none'
+                    ? `Send friend request to ${selectedUser.username} to start chatting`
+                    : `Message ${selectedUser.username}...`
+                }
                 className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
                 rows={1}
-                disabled={!selectedUser}
+                disabled={!selectedUser || friendStatus[selectedUser.id] !== 'friends'}
                 style={{ minHeight: '44px' }}
               />
             </div>
             
             <button
               onClick={handleSendMessage}
-              disabled={!messageInput.trim() || !selectedUser}
+              disabled={!messageInput.trim() || !selectedUser || friendStatus[selectedUser.id] !== 'friends'}
               className="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-              title="Send message"
+              title={
+                !selectedUser 
+                  ? 'Select a user to send message' 
+                  : friendStatus[selectedUser.id] !== 'friends'
+                  ? 'Send friend request first'
+                  : 'Send message'
+              }
             >
               <Send className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
