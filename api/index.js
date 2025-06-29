@@ -25,7 +25,7 @@ const io = new Server(server, {
 })
 
 // Google OAuth client
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || '608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com')
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || 'your-google-client-id')
 
 // MongoDB Connection - Use environment variable or fallback to in-memory
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://govindayadav2478:Geh3eqcU5ub0X58G@cluster0.vqwlghm.mongodb.net/'
