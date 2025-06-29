@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { io, Socket } from 'socket.io-client'
-import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Smile, Image, File, Camera } from 'lucide-react'
+import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Smile, Image, File, Camera, Play, Sparkles, LogOut, Menu } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmojiPicker from 'emoji-picker-react'
 import { config } from '../config'
@@ -32,9 +32,12 @@ interface UserData {
 interface ChatRoomProps {
   onBack: () => void
   currentUser: UserData
+  onNavigateToPlayground?: () => void
+  onNavigateTo3D?: () => void
+  onLogout?: () => void
 }
 
-export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
+export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, onNavigateTo3D, onLogout }: ChatRoomProps) {
   const [socket, setSocket] = useState<Socket | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [messageInput, setMessageInput] = useState('')
@@ -56,6 +59,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   const [isUploadingProfile, setIsUploadingProfile] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   const [unreadMessages, setUnreadMessages] = useState<{[key: string]: number}>({})
+  const [localCurrentUser, setLocalCurrentUser] = useState<UserData>(currentUser)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -163,6 +167,26 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     if ('Notification' in window && Notification.permission === 'granted') {
       new Notification(title, { body, icon: '/favicon.ico' })
     }
+  }
+
+  // Function to recover missing images from base64 backup
+  const recoverMissingImage = async (filename: string) => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/files/${filename}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      
+      if (response.ok) {
+        const { dataUrl } = await response.json()
+        return dataUrl
+      }
+    } catch (error) {
+      console.error('Image recovery error:', error)
+    }
+    return null
   }
 
   useEffect(() => {
@@ -519,12 +543,23 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     const file = event.target.files?.[0]
     if (!file) return
 
+    console.log('File upload started:', file.name, file.size, file.type)
+    console.log('Selected user:', selectedUser)
+    
+    if (!selectedUser) {
+      toast.error('Please select a user to send the file to')
+      return
+    }
+    
     setIsUploading(true)
     try {
       const formData = new FormData()
       formData.append('file', file)
       
       const token = localStorage.getItem('token')
+      console.log('Uploading file to:', `${config.apiBaseUrl}/api/files/upload`)
+      console.log('Token exists:', !!token)
+      
       const response = await fetch(`${config.apiBaseUrl}/api/files/upload`, {
         method: 'POST',
         headers: {
@@ -533,13 +568,29 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
         body: formData
       })
       
+      console.log('File upload response status:', response.status)
+      console.log('File upload response ok:', response.ok)
+      
       if (response.ok) {
-        const { fileUrl, fileName, fileSize, isImage, dataUrl } = await response.json()
-        // Use dataUrl for images, fileUrl for other files
-        const finalUrl = isImage ? dataUrl : fileUrl
-        await sendMessage(finalUrl, file.type.startsWith('image/') ? 'image' : 'file', fileName, fileSize, finalUrl)
+        const responseData = await response.json()
+        console.log('File upload response data:', responseData)
+        const { fileUrl, fileName, fileSize, isImage } = responseData
+        
+        console.log('About to send message with:', {
+          content: fileUrl,
+          type: file.type.startsWith('image/') ? 'image' : 'file',
+          fileName,
+          fileSize,
+          fileUrl
+        })
+        
+        // Use the file URL for the message
+        await sendMessage(fileUrl, file.type.startsWith('image/') ? 'image' : 'file', fileName, fileSize, fileUrl)
+        toast.success('File uploaded successfully!')
       } else {
-        toast.error('Failed to upload file')
+        const errorText = await response.text()
+        console.error('File upload failed:', response.status, errorText)
+        toast.error(`Failed to upload file: ${response.status}`)
       }
     } catch (error) {
       console.error('File upload error:', error)
@@ -577,9 +628,11 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       if (response.ok) {
         const { avatar } = await response.json()
         console.log('Profile picture uploaded successfully:', avatar)
-        // Update current user's avatar (avatar is now a data URL)
-        const updatedUser = { ...currentUser, avatar }
+        // Update current user's avatar immediately
+        const updatedUser = { ...localCurrentUser, avatar }
         localStorage.setItem('user', JSON.stringify(updatedUser))
+        // Update local state for immediate UI update
+        setLocalCurrentUser(updatedUser)
         toast.success('Profile picture updated!')
       } else {
         const errorText = await response.text()
@@ -679,10 +732,10 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="relative group">
-              {currentUser.avatar ? (
+              {localCurrentUser.avatar ? (
                 <img 
-                  src={getFullUrl(currentUser.avatar)} 
-                  alt={currentUser.username}
+                  src={getFullUrl(localCurrentUser.avatar)} 
+                  alt={localCurrentUser.username}
                   className="w-10 h-10 rounded-full object-cover"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none'
@@ -690,8 +743,8 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                   }}
                 />
               ) : null}
-              <div className={`w-10 h-10 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${currentUser.avatar ? 'hidden' : ''}`}>
-                <span className="text-white font-semibold">{currentUser.username[0].toUpperCase()}</span>
+              <div className={`w-10 h-10 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${localCurrentUser.avatar ? 'hidden' : ''}`}>
+                <span className="text-white font-semibold">{localCurrentUser.username[0].toUpperCase()}</span>
               </div>
               <button
                 onClick={() => profileInputRef.current?.click()}
@@ -714,7 +767,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
               />
             </div>
             <div>
-              <h2 className="font-semibold">{currentUser.username}</h2>
+              <h2 className="font-semibold">{localCurrentUser.username}</h2>
               <div className="flex items-center space-x-1">
                 <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 <span className="text-xs text-secondary-500">
@@ -815,10 +868,10 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="relative group">
-              {currentUser.avatar ? (
+              {localCurrentUser.avatar ? (
                 <img 
-                  src={getFullUrl(currentUser.avatar)} 
-                  alt={currentUser.username}
+                  src={getFullUrl(localCurrentUser.avatar)} 
+                  alt={localCurrentUser.username}
                   className="w-8 h-8 rounded-full object-cover"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none'
@@ -826,8 +879,8 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                   }}
                 />
               ) : null}
-              <div className={`w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${currentUser.avatar ? 'hidden' : ''}`}>
-                <span className="text-white text-sm font-semibold">{currentUser.username[0].toUpperCase()}</span>
+              <div className={`w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${localCurrentUser.avatar ? 'hidden' : ''}`}>
+                <span className="text-white text-sm font-semibold">{localCurrentUser.username[0].toUpperCase()}</span>
               </div>
               <button
                 onClick={() => profileInputRef.current?.click()}
@@ -843,7 +896,7 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
               </button>
             </div>
             <div>
-              <h2 className="font-semibold text-sm">{currentUser.username}</h2>
+              <h2 className="font-semibold text-sm">{localCurrentUser.username}</h2>
               <div className="flex items-center space-x-1">
                 <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 <span className="text-xs text-secondary-500">
@@ -856,7 +909,9 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
           {/* Mobile Menu Button */}
           <button
             onClick={() => setShowMobileMenu(!showMobileMenu)}
-            className="p-2 hover:bg-secondary-100 rounded-lg relative"
+            className={`p-2 rounded-lg relative transition-colors ${
+              showMobileMenu ? 'bg-primary-100 text-primary-600' : 'hover:bg-secondary-100'
+            }`}
           >
             <Users className="w-5 h-5" />
             {Object.values(unreadMessages).reduce((sum, count) => sum + count, 0) > 0 && (
@@ -870,7 +925,13 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
 
       {/* Mobile Users Menu */}
       {showMobileMenu && (
-        <div className="md:hidden bg-white border-b border-secondary-200 p-4">
+        <motion.div 
+          className="md:hidden bg-white border-b border-secondary-200 p-4"
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.3, ease: 'easeInOut' }}
+        >
           <div className="mb-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-secondary-600 flex items-center">
@@ -885,63 +946,147 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
               </button>
             </div>
           </div>
-          <div className="relative mb-3">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <input
-              type="text"
-              placeholder="Search users..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-secondary-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
-            />
-          </div>
           
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {filteredUsers.map((user) => (
-              <motion.div
-                key={user.id}
-                onClick={() => handleUserSelect(user)}
-                className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                  selectedUser?.id === user.id 
-                    ? 'bg-primary-100 border border-primary-300' 
-                    : 'hover:bg-secondary-50'
-                }`}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <div className="flex items-center space-x-3">
-                  {user.avatar ? (
-                    <img 
-                      src={getFullUrl(user.avatar)} 
-                      alt={user.username}
-                      className="w-8 h-8 rounded-full object-cover"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none'
-                        e.currentTarget.nextElementSibling?.classList.remove('hidden')
-                      }}
-                    />
-                  ) : null}
-                  <div className={`w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${user.avatar ? 'hidden' : ''}`}>
-                    <span className="text-white text-sm font-semibold">
-                      {user.username[0].toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{user.username}</p>
-                    <p className="text-xs text-secondary-500 truncate">{user.email}</p>
-                  </div>
-                  {unreadMessages[user.id] > 0 && (
-                    <div className="flex-shrink-0">
-                      <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full min-w-[20px] text-center">
-                        {unreadMessages[user.id]}
+          {/* Users Section */}
+          <div className="mb-4">
+            <h4 className="text-sm font-semibold text-secondary-600 mb-3 flex items-center">
+              <Users className="w-4 h-4 mr-2" />
+              Users ({filteredUsers.length})
+            </h4>
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
+                placeholder="Search users..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-secondary-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+              />
+            </div>
+            
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {filteredUsers.map((user) => (
+                <motion.div
+                  key={user.id}
+                  onClick={() => handleUserSelect(user)}
+                  className={`p-3 rounded-lg cursor-pointer transition-colors ${
+                    selectedUser?.id === user.id 
+                      ? 'bg-primary-100 border border-primary-300' 
+                      : 'hover:bg-secondary-50'
+                  }`}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <div className="flex items-center space-x-3">
+                    {user.avatar ? (
+                      <img 
+                        src={getFullUrl(user.avatar)} 
+                        alt={user.username}
+                        className="w-8 h-8 rounded-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                          e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                        }}
+                      />
+                    ) : null}
+                    <div className={`w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${user.avatar ? 'hidden' : ''}`}>
+                      <span className="text-white text-sm font-semibold">
+                        {user.username[0].toUpperCase()}
                       </span>
                     </div>
-                  )}
-                </div>
-              </motion.div>
-            ))}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{user.username}</p>
+                      <p className="text-xs text-secondary-500 truncate">{user.email}</p>
+                    </div>
+                    {unreadMessages[user.id] > 0 && (
+                      <div className="flex-shrink-0">
+                        <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full min-w-[20px] text-center">
+                          {unreadMessages[user.id]}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </div>
-        </div>
+          
+          {/* Navigation Options */}
+          <div className="border-t border-secondary-200 pt-4">
+            <h4 className="text-sm font-semibold text-secondary-600 mb-3">Navigation</h4>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  setShowMobileMenu(false)
+                  onBack()
+                }}
+                className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+              >
+                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center">
+                  <ArrowLeft className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">Back to Home</p>
+                  <p className="text-xs text-secondary-500">Return to main menu</p>
+                </div>
+              </button>
+              
+              {onNavigateToPlayground && (
+                <button
+                  onClick={() => {
+                    setShowMobileMenu(false)
+                    onNavigateToPlayground()
+                  }}
+                  className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+                >
+                  <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-500 rounded-lg flex items-center justify-center">
+                    <Play className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm">Animations Playground</p>
+                    <p className="text-xs text-secondary-500">Interactive animations</p>
+                  </div>
+                </button>
+              )}
+              
+              {onNavigateTo3D && (
+                <button
+                  onClick={() => {
+                    setShowMobileMenu(false)
+                    onNavigateTo3D()
+                  }}
+                  className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+                >
+                  <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+                    <Sparkles className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm">3D Playground</p>
+                    <p className="text-xs text-secondary-500">Three.js experiences</p>
+                  </div>
+                </button>
+              )}
+              
+              {onLogout && (
+                <button
+                  onClick={() => {
+                    setShowMobileMenu(false)
+                    onLogout()
+                  }}
+                  className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-red-50 transition-colors text-left"
+                >
+                  <div className="w-8 h-8 bg-gradient-to-r from-red-500 to-red-600 rounded-lg flex items-center justify-center">
+                    <LogOut className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm text-red-600">Logout</p>
+                    <p className="text-xs text-red-500">Sign out of your account</p>
+                  </div>
+                </button>
+              )}
+            </div>
+          </div>
+        </motion.div>
       )}
 
       {/* Chat Area */}
@@ -1008,11 +1153,11 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                 key={message.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`flex ${message.senderId === currentUser.id ? 'justify-end' : 'justify-start'} mb-4`}
+                className={`flex ${message.senderId === localCurrentUser.id ? 'justify-end' : 'justify-start'} mb-4`}
               >
-                <div className={`flex items-end space-x-2 max-w-[85%] sm:max-w-xs lg:max-w-md ${message.senderId === currentUser.id ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                <div className={`flex items-end space-x-2 max-w-[85%] sm:max-w-xs lg:max-w-md ${message.senderId === localCurrentUser.id ? 'flex-row-reverse space-x-reverse' : ''}`}>
                   {/* Profile Picture */}
-                  {message.senderId !== currentUser.id && (
+                  {message.senderId !== localCurrentUser.id && (
                     <div className="flex-shrink-0">
                       {message.sender.avatar ? (
                         <img 
@@ -1034,10 +1179,10 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                   )}
                   
                   <div className="flex flex-col">
-                    {message.senderId !== currentUser.id && (
+                    {message.senderId !== localCurrentUser.id && (
                       <p className="text-xs text-secondary-500 mb-1">{message.sender.username}</p>
                     )}
-                    <div className={`chat-bubble ${message.senderId === currentUser.id ? 'chat-bubble-sent' : 'chat-bubble-received'}`}>
+                    <div className={`chat-bubble ${message.senderId === localCurrentUser.id ? 'chat-bubble-sent' : 'chat-bubble-received'}`}>
                       {message.type === 'image' && (
                         <div className="mb-2">
                           <img 

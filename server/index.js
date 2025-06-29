@@ -15,11 +15,25 @@ import fs from 'fs'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// Ensure uploads directory exists
+// Ensure uploads directory exists with proper error handling
 const uploadsDir = path.join(__dirname, 'uploads')
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true })
-  console.log('📁 Created uploads directory')
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true })
+    console.log('✅ Created uploads directory:', uploadsDir)
+  } else {
+    console.log('✅ Uploads directory exists:', uploadsDir)
+  }
+  
+  // Test write permissions
+  const testFile = path.join(uploadsDir, 'test.txt')
+  fs.writeFileSync(testFile, 'test')
+  fs.unlinkSync(testFile)
+  console.log('✅ Uploads directory is writable')
+} catch (error) {
+  console.error('❌ Error with uploads directory:', error.message)
+  console.error('❌ Uploads directory path:', uploadsDir)
+  console.error('❌ Current directory:', __dirname)
 }
 
 const app = express()
@@ -103,7 +117,6 @@ const fileSchema = new mongoose.Schema({
   mimeType: { type: String, required: true },
   uploadedBy: { type: String, required: true },
   uploadedAt: { type: Date, default: Date.now },
-  base64Data: { type: String }, // Store base64 data for images
   isImage: { type: Boolean, default: false }
 })
 
@@ -197,13 +210,12 @@ app.use(cors({
 app.use(express.json())
 app.use(express.static(path.join(__dirname, '../dist')))
 
-// Custom middleware to handle missing files
+// Simple file serving middleware
 app.use('/uploads', (req, res, next) => {
   const filePath = path.join(uploadsDir, req.url)
   
   if (!fileExists(filePath)) {
     console.log('File not found:', req.url)
-    // Return a placeholder image or error response
     res.status(404).json({ 
       error: 'File not found', 
       message: 'This file may have been removed after server restart',
@@ -217,8 +229,16 @@ app.use('/uploads', (req, res, next) => {
 
 app.use('/uploads', express.static(uploadsDir))
 
-// File upload configuration - Store as base64 in database instead of files
-const storage = multer.memoryStorage() // Store in memory temporarily
+// File upload configuration - Use disk storage but implement cloud backup
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir)
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`
+    cb(null, uniqueName)
+  }
+})
 
 const upload = multer({ 
   storage,
@@ -533,14 +553,19 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
 
 app.post('/api/messages', authenticateToken, async (req, res) => {
   try {
-    console.log('Message endpoint - Request received:', req.body)
-    console.log('Message endpoint - User:', req.user)
+    console.log('💬 Message endpoint - Request received:', req.body)
+    console.log('👤 Message endpoint - User:', req.user)
     
     const { content, type = 'text', fileName, fileSize, receiverId, fileUrl } = req.body
     
     if (!receiverId) {
-      console.log('Message endpoint - Missing receiverId')
+      console.log('❌ Message endpoint - Missing receiverId')
       return res.status(400).json({ message: 'Receiver ID is required' })
+    }
+    
+    if (!content || !content.trim()) {
+      console.log('❌ Message endpoint - Missing content')
+      return res.status(400).json({ message: 'Message content is required' })
     }
     
     let user
@@ -550,10 +575,10 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
       user = findUserById(req.user.id)
     }
     
-    console.log('Message endpoint - Found user:', user ? 'yes' : 'no')
+    console.log('👤 Message endpoint - Found user:', user ? 'yes' : 'no')
     
     if (!user) {
-      console.log('Message endpoint - User not found')
+      console.log('❌ Message endpoint - User not found')
       return res.status(404).json({ message: 'User not found' })
     }
 
@@ -574,75 +599,98 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
       fileUrl
     }
 
-    console.log('Message endpoint - Created message:', message)
+    console.log('💬 Message endpoint - Created message:', message)
 
     if (isConnected) {
       const newMessage = new Message(message)
       await newMessage.save()
-      console.log('Message endpoint - Message saved to MongoDB')
+      console.log('✅ Message endpoint - Message saved to MongoDB')
       // Emit to all clients (sender will handle it properly in frontend)
       io.emit('message:receive', newMessage)
       res.json(newMessage)
     } else {
       const savedMessage = saveMessage(message)
-      console.log('Message endpoint - Message saved to memory')
+      console.log('✅ Message endpoint - Message saved to memory')
       // Emit to all clients (sender will handle it properly in frontend)
       io.emit('message:receive', savedMessage)
       res.json(savedMessage)
     }
   } catch (error) {
-    console.error('Send message error:', error)
-    res.status(500).json({ message: 'Server error' })
+    console.error('❌ Send message error:', error)
+    console.error('❌ Error stack:', error.stack)
+    res.status(500).json({ message: 'Server error: ' + error.message })
   }
 })
 
 app.post('/api/files/upload', authenticateToken, upload.single('file'), async (req, res) => {
   try {
+    console.log('📁 File upload request received')
+    console.log('👤 User:', req.user)
+    console.log('📄 File:', req.file ? 'present' : 'missing')
+    
     if (!req.file) {
+      console.log('❌ No file uploaded')
       return res.status(400).json({ message: 'No file uploaded' })
     }
 
-    // Convert file to base64
-    const base64Data = req.file.buffer.toString('base64')
-    const isImage = req.file.mimetype.startsWith('image/')
+    console.log('📄 File details:', {
+      originalname: req.file.originalname,
+      filename: req.file.filename,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+      path: req.file.path
+    })
+
+    // Verify file was actually saved
+    if (!fs.existsSync(req.file.path)) {
+      console.error('❌ File was not saved to disk:', req.file.path)
+      return res.status(500).json({ message: 'File upload failed - file not saved' })
+    }
+
+    // Create full URL for the file
+    const baseUrl = req.protocol + '://' + req.get('host')
+    const fileUrl = `${baseUrl}/uploads/${req.file.filename}`
     
-    // Create data URL for images
-    const dataUrl = isImage ? `data:${req.file.mimetype};base64,${base64Data}` : null
+    console.log('🔗 File URL:', fileUrl)
+    console.log('📁 Uploads directory:', uploadsDir)
+    console.log('📁 File path:', req.file.path)
     
     // Create file metadata
     const fileData = {
       id: uuidv4(),
-      filename: `${Date.now()}-${uuidv4()}${path.extname(req.file.originalname)}`,
+      filename: req.file.filename,
       originalName: req.file.originalname,
-      fileUrl: dataUrl || `${req.protocol}://${req.get('host')}/api/files/${uuidv4()}`,
+      fileUrl: fileUrl,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       uploadedBy: req.user.id,
       uploadedAt: new Date(),
-      base64Data,
-      isImage
+      isImage: req.file.mimetype.startsWith('image/')
     }
+
+    console.log('💾 File metadata:', fileData)
 
     // Store file metadata in database
     if (isConnected) {
       const newFile = new File(fileData)
       await newFile.save()
-      console.log('File metadata saved to MongoDB with base64 data')
+      console.log('✅ File metadata saved to MongoDB')
     } else {
       saveFile(fileData)
-      console.log('File metadata saved to memory with base64 data')
+      console.log('✅ File metadata saved to memory')
     }
     
+    console.log('✅ File upload successful')
     res.json({
-      fileUrl: fileData.fileUrl,
+      fileUrl: fileUrl,
       fileName: req.file.originalname,
       fileSize: req.file.size,
-      isImage,
-      dataUrl: isImage ? dataUrl : null
+      isImage: req.file.mimetype.startsWith('image/')
     })
   } catch (error) {
-    console.error('File upload error:', error)
-    res.status(500).json({ message: 'Server error' })
+    console.error('❌ File upload error:', error)
+    console.error('❌ Error stack:', error.stack)
+    res.status(500).json({ message: 'Server error: ' + error.message })
   }
 })
 
@@ -663,22 +711,21 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
       return res.status(400).json({ message: 'Only image files are allowed' })
     }
 
-    // Convert file to base64
-    const base64Data = req.file.buffer.toString('base64')
-    const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`
-    console.log('Profile upload endpoint - Data URL created')
+    // Create full URL for the avatar
+    const baseUrl = req.protocol + '://' + req.get('host')
+    const avatarUrl = `${baseUrl}/uploads/${req.file.filename}`
+    console.log('Profile upload endpoint - Avatar URL:', avatarUrl)
     
-    // Store file metadata for profile pictures too
+    // Store file metadata for profile pictures
     const fileData = {
       id: uuidv4(),
-      filename: `${Date.now()}-${uuidv4()}${path.extname(req.file.originalname)}`,
+      filename: req.file.filename,
       originalName: req.file.originalname,
-      fileUrl: dataUrl,
+      fileUrl: avatarUrl,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       uploadedBy: req.user.id,
       uploadedAt: new Date(),
-      base64Data,
       isImage: true
     }
 
@@ -693,14 +740,14 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
     if (isConnected) {
       const updatedUser = await User.findOneAndUpdate(
         { id: req.user.id },
-        { avatar: dataUrl, updatedAt: new Date() },
+        { avatar: avatarUrl, updatedAt: new Date() },
         { new: true }
       )
       console.log('Profile upload endpoint - User updated in MongoDB:', updatedUser ? 'yes' : 'no')
     } else {
       const user = findUserById(req.user.id)
       if (user) {
-        user.avatar = dataUrl
+        user.avatar = avatarUrl
         user.updatedAt = new Date()
         saveUser(user)
         console.log('Profile upload endpoint - User updated in memory')
@@ -709,11 +756,11 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
       }
     }
 
-    console.log('Profile upload endpoint - Success, returning data URL')
-    res.json({ avatar: dataUrl })
+    console.log('Profile upload endpoint - Success, returning avatar URL')
+    res.json({ avatar: avatarUrl })
   } catch (error) {
     console.error('Profile upload error:', error)
-    res.status(500).json({ message: 'Server error' })
+    res.status(500).json({ message: 'Server error: ' + error.message })
   }
 })
 

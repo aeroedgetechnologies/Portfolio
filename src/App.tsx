@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { MessageCircle, Users, Zap, Sparkles, ArrowRight, Play, LogOut, User } from 'lucide-react'
+import { MessageCircle, Users, Zap, Sparkles, ArrowRight, Play, LogOut, User, Menu } from 'lucide-react'
 import ChatRoom from './components/ChatRoom'
 import AnimationsPlayground from './components/AnimationsPlayground'
 import ThreeJSPlayground from './components/ThreeJSPlayground'
@@ -19,6 +19,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState<Page>('auth')
   const [user, setUser] = useState<UserData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [showMobileMenu, setShowMobileMenu] = useState(false)
 
   useEffect(() => {
     // Check if user is already logged in
@@ -89,7 +90,15 @@ function App() {
   }
 
   if (currentPage === 'chat') {
-    return <ChatRoom onBack={() => setCurrentPage('home')} currentUser={user} />
+    return (
+      <ChatRoom 
+        onBack={() => setCurrentPage('home')} 
+        currentUser={user}
+        onNavigateToPlayground={() => setCurrentPage('animations')}
+        onNavigateTo3D={() => setCurrentPage('3d')}
+        onLogout={handleLogout}
+      />
+    )
   }
 
   if (currentPage === 'animations') {
@@ -120,8 +129,9 @@ function App() {
               <span className="text-xl font-bold gradient-text">FastChat</span>
             </motion.div>
             
+            {/* Desktop Navigation */}
             <motion.div 
-              className="flex items-center space-x-4"
+              className="hidden md:flex items-center space-x-4"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
@@ -156,8 +166,112 @@ function App() {
                 <span>Logout</span>
               </button>
             </motion.div>
+
+            {/* Mobile Hamburger Menu */}
+            <div className="md:hidden flex items-center space-x-2">
+              <div className="flex items-center space-x-2 text-sm text-gray-600">
+                <User className="w-4 h-4" />
+                <span className="hidden sm:inline">{user.username}</span>
+              </div>
+              <button
+                onClick={() => setShowMobileMenu(!showMobileMenu)}
+                className={`p-2 rounded-lg transition-colors ${
+                  showMobileMenu ? 'bg-primary-100 text-primary-600' : 'hover:bg-secondary-100'
+                }`}
+              >
+                {/* Hamburger Menu Icon */}
+                <div className="w-5 h-5 flex flex-col justify-center items-center space-y-0.5">
+                  <div className={`w-4 h-0.5 bg-current transition-all duration-300 ${
+                    showMobileMenu ? 'rotate-45 translate-y-1.5' : ''
+                  }`}></div>
+                  <div className={`w-4 h-0.5 bg-current transition-all duration-300 ${
+                    showMobileMenu ? 'opacity-0' : ''
+                  }`}></div>
+                  <div className={`w-4 h-0.5 bg-current transition-all duration-300 ${
+                    showMobileMenu ? '-rotate-45 -translate-y-1.5' : ''
+                  }`}></div>
+                </div>
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Mobile Menu Dropdown */}
+        {showMobileMenu && (
+          <motion.div 
+            className="md:hidden bg-white border-t border-secondary-200 shadow-lg"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+          >
+            <div className="px-4 py-3 space-y-2">
+              <button
+                onClick={() => {
+                  setCurrentPage('chat')
+                  setShowMobileMenu(false)
+                }}
+                className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+              >
+                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center">
+                  <MessageCircle className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">Chat</p>
+                  <p className="text-xs text-secondary-500">Start messaging</p>
+                </div>
+              </button>
+              
+              <button
+                onClick={() => {
+                  setCurrentPage('animations')
+                  setShowMobileMenu(false)
+                }}
+                className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+              >
+                <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-500 rounded-lg flex items-center justify-center">
+                  <Play className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">Animations Playground</p>
+                  <p className="text-xs text-secondary-500">Interactive animations</p>
+                </div>
+              </button>
+              
+              <button
+                onClick={() => {
+                  setCurrentPage('3d')
+                  setShowMobileMenu(false)
+                }}
+                className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+              >
+                <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">3D Playground</p>
+                  <p className="text-xs text-secondary-500">Three.js experiences</p>
+                </div>
+              </button>
+              
+              <button
+                onClick={() => {
+                  handleLogout()
+                  setShowMobileMenu(false)
+                }}
+                className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-red-50 transition-colors text-left"
+              >
+                <div className="w-8 h-8 bg-gradient-to-r from-red-500 to-red-600 rounded-lg flex items-center justify-center">
+                  <LogOut className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm text-red-600">Logout</p>
+                  <p className="text-xs text-red-500">Sign out of your account</p>
+                </div>
+              </button>
+            </div>
+          </motion.div>
+        )}
       </nav>
 
       {/* Hero Section */}
