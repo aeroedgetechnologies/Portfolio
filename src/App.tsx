@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { MessageCircle, Users, Zap, Sparkles, ArrowRight, Play, LogOut, User, Menu } from 'lucide-react'
+import { MessageCircle, Users, Zap, Sparkles, ArrowRight, Play, LogOut, User } from 'lucide-react'
 import ChatRoom from './components/ChatRoom'
 import AnimationsPlayground from './components/AnimationsPlayground'
 import ThreeJSPlayground from './components/ThreeJSPlayground'

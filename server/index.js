@@ -39,6 +39,7 @@ const isDeployment = process.env.NODE_ENV === 'production' || process.env.RENDER
 const inMemoryUsers = new Map()
 const inMemoryMessages = []
 const inMemoryFiles = new Map() // Store file metadata for recovery
+const inMemoryFriendRequests = new Map() // Store friend requests for recovery
 
 // Ensure uploads directory exists with proper error handling
 const uploadsDir = path.join(__dirname, 'uploads')
@@ -123,9 +124,19 @@ const fileSchema = new mongoose.Schema({
   uploadedAt: { type: Date, default: Date.now }
 })
 
+const friendRequestSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  senderId: { type: String, required: true },
+  receiverId: { type: String, required: true },
+  status: { type: String, enum: ['pending', 'accepted', 'declined'], default: 'pending' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+})
+
 const User = mongoose.model('User', userSchema)
 const Message = mongoose.model('Message', messageSchema)
 const File = mongoose.model('File', fileSchema)
+const FriendRequest = mongoose.model('FriendRequest', friendRequestSchema)
 
 // Helper functions for in-memory storage
 const findUserByEmail = (email) => {
@@ -179,6 +190,36 @@ const findFileById = (id) => {
 
 const getAllFiles = () => {
   return Array.from(inMemoryFiles.values())
+}
+
+// Friend request helper functions
+const saveFriendRequest = (request) => {
+  inMemoryFriendRequests.set(request.id, request)
+  return request
+}
+
+const findFriendRequest = (senderId, receiverId) => {
+  return Array.from(inMemoryFriendRequests.values()).find(req => 
+    (req.senderId === senderId && req.receiverId === receiverId) ||
+    (req.senderId === receiverId && req.receiverId === senderId)
+  )
+}
+
+const getFriendRequestsForUser = (userId) => {
+  return Array.from(inMemoryFriendRequests.values()).filter(req => 
+    req.receiverId === userId && req.status === 'pending'
+  )
+}
+
+const getSentFriendRequests = (userId) => {
+  return Array.from(inMemoryFriendRequests.values()).filter(req => 
+    req.senderId === userId && req.status === 'pending'
+  )
+}
+
+const areFriends = (userId1, userId2) => {
+  const request = findFriendRequest(userId1, userId2)
+  return request && request.status === 'accepted'
 }
 
 // Function to check if a file exists
@@ -845,6 +886,195 @@ app.get('/api/users', authenticateToken, async (req, res) => {
     res.json(users)
   } catch (error) {
     console.error('Get users error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Friend request endpoints
+app.post('/api/friend-requests', authenticateToken, async (req, res) => {
+  try {
+    const { receiverId } = req.body
+    const senderId = req.user.id
+
+    if (senderId === receiverId) {
+      return res.status(400).json({ message: 'Cannot send friend request to yourself' })
+    }
+
+    // Check if request already exists
+    let existingRequest
+    if (isConnected) {
+      existingRequest = await FriendRequest.findOne({
+        $or: [
+          { senderId, receiverId },
+          { senderId: receiverId, receiverId: senderId }
+        ]
+      })
+    } else {
+      existingRequest = findFriendRequest(senderId, receiverId)
+    }
+
+    if (existingRequest) {
+      if (existingRequest.status === 'pending') {
+        return res.status(400).json({ message: 'Friend request already sent' })
+      } else if (existingRequest.status === 'accepted') {
+        return res.status(400).json({ message: 'Already friends' })
+      }
+    }
+
+    const requestId = uuidv4()
+    const friendRequest = {
+      id: requestId,
+      senderId,
+      receiverId,
+      status: 'pending',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+
+    if (isConnected) {
+      const newRequest = new FriendRequest(friendRequest)
+      await newRequest.save()
+    } else {
+      saveFriendRequest(friendRequest)
+    }
+
+    res.json({ message: 'Friend request sent successfully', request: friendRequest })
+  } catch (error) {
+    console.error('Send friend request error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+app.get('/api/friend-requests/received', authenticateToken, async (req, res) => {
+  try {
+    let requests
+    if (isConnected) {
+      requests = await FriendRequest.find({ 
+        receiverId: req.user.id, 
+        status: 'pending' 
+      }).populate('senderId', 'username avatar')
+    } else {
+      requests = getFriendRequestsForUser(req.user.id)
+    }
+    res.json({ requests })
+  } catch (error) {
+    console.error('Get received requests error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+app.get('/api/friend-requests/sent', authenticateToken, async (req, res) => {
+  try {
+    let requests
+    if (isConnected) {
+      requests = await FriendRequest.find({ 
+        senderId: req.user.id, 
+        status: 'pending' 
+      }).populate('receiverId', 'username avatar')
+    } else {
+      requests = getSentFriendRequests(req.user.id)
+    }
+    res.json({ requests })
+  } catch (error) {
+    console.error('Get sent requests error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+app.put('/api/friend-requests/:requestId', authenticateToken, async (req, res) => {
+  try {
+    const { requestId } = req.params
+    const { action } = req.body // 'accept' or 'decline'
+    const userId = req.user.id
+
+    let request
+    if (isConnected) {
+      request = await FriendRequest.findOne({ id: requestId, receiverId: userId })
+    } else {
+      request = Array.from(inMemoryFriendRequests.values()).find(req => 
+        req.id === requestId && req.receiverId === userId
+      )
+    }
+
+    if (!request) {
+      return res.status(404).json({ message: 'Friend request not found' })
+    }
+
+    if (action === 'accept') {
+      request.status = 'accepted'
+    } else if (action === 'decline') {
+      request.status = 'declined'
+    } else {
+      return res.status(400).json({ message: 'Invalid action' })
+    }
+
+    request.updatedAt = new Date()
+
+    if (isConnected) {
+      await request.save()
+    } else {
+      saveFriendRequest(request)
+    }
+
+    res.json({ message: `Friend request ${action}ed successfully`, request })
+  } catch (error) {
+    console.error('Update friend request error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+app.delete('/api/friend-requests/:requestId', authenticateToken, async (req, res) => {
+  try {
+    const { requestId } = req.params
+    const userId = req.user.id
+
+    let request
+    if (isConnected) {
+      request = await FriendRequest.findOne({ id: requestId, senderId: userId })
+    } else {
+      request = Array.from(inMemoryFriendRequests.values()).find(req => 
+        req.id === requestId && req.senderId === userId
+      )
+    }
+
+    if (!request) {
+      return res.status(404).json({ message: 'Friend request not found' })
+    }
+
+    if (isConnected) {
+      await FriendRequest.deleteOne({ id: requestId })
+    } else {
+      inMemoryFriendRequests.delete(requestId)
+    }
+
+    res.json({ message: 'Friend request cancelled successfully' })
+  } catch (error) {
+    console.error('Cancel friend request error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+app.get('/api/friends/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params
+    let areFriendsResult = false
+
+    if (isConnected) {
+      const request = await FriendRequest.findOne({
+        $or: [
+          { senderId: req.user.id, receiverId: userId },
+          { senderId: userId, receiverId: req.user.id }
+        ],
+        status: 'accepted'
+      })
+      areFriendsResult = !!request
+    } else {
+      areFriendsResult = areFriends(req.user.id, userId)
+    }
+
+    res.json({ areFriends: areFriendsResult })
+  } catch (error) {
+    console.error('Check friends error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { io, Socket } from 'socket.io-client'
-import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Smile, Image, File, Camera, Play, Sparkles, LogOut, Menu, Edit } from 'lucide-react'
+import { Send, Paperclip, ArrowLeft, Search, Users, MessageCircle, Smile, Image, File, Camera, Play, Sparkles, LogOut, Edit } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmojiPicker from 'emoji-picker-react'
 import { config } from '../config'
@@ -29,6 +29,16 @@ interface UserData {
   username: string
   email: string
   avatar?: string
+}
+
+interface FriendRequest {
+  id: string
+  senderId: string
+  receiverId: string
+  status: 'pending' | 'accepted' | 'declined'
+  createdAt: Date
+  sender?: UserData
+  receiver?: UserData
 }
 
 interface ChatRoomProps {
@@ -65,6 +75,10 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   const [showUsernameModal, setShowUsernameModal] = useState(false)
   const [newUsername, setNewUsername] = useState('')
   const [isChangingUsername, setIsChangingUsername] = useState(false)
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([])
+  const [sentRequests, setSentRequests] = useState<FriendRequest[]>([])
+  const [showFriendRequests, setShowFriendRequests] = useState(false)
+  const [friendStatus, setFriendStatus] = useState<{[key: string]: 'none' | 'pending' | 'sent' | 'friends'}>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -303,6 +317,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   useEffect(() => {
     fetchMessages()
     fetchUsers()
+    fetchFriendRequests()
   }, [])
 
   useEffect(() => {
@@ -468,12 +483,31 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('File upload triggered!')
+    console.log('Event:', event)
+    console.log('Files:', event.target.files)
+    
     const file = event.target.files?.[0]
-    if (!file) return
+    if (!file) {
+      console.log('No file selected')
+      return
+    }
+
+    console.log('File selected:', file.name, file.size, file.type)
 
     // Check if a user is selected
     if (!selectedUser) {
+      console.log('No user selected')
       toast.error('Please select a user to send the file to')
+      return
+    }
+
+    console.log('User selected:', selectedUser)
+
+    // Check file size (5MB limit for deployment)
+    const maxSize = 5 * 1024 * 1024 // 5MB
+    if (file.size > maxSize) {
+      toast.error('File too large. Please select a file smaller than 5MB.')
       return
     }
 
@@ -483,12 +517,15 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
       formData.append('file', file)
       
       const token = localStorage.getItem('token')
-      console.log('Uploading file to:', `${config.apiBaseUrl}/api/upload`)
+      const uploadUrl = `${config.apiBaseUrl}/api/upload`
+      console.log('Uploading file to:', uploadUrl)
       console.log('Token exists:', !!token)
       console.log('File:', file.name, file.size, file.type)
       console.log('Selected user:', selectedUser)
+      console.log('Is production:', config.isProduction)
+      console.log('Is Vercel:', config.isVercel)
       
-      const response = await fetch(`${config.apiBaseUrl}/api/upload`, {
+      const response = await fetch(uploadUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -498,6 +535,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
       
       console.log('File upload response status:', response.status)
       console.log('File upload response ok:', response.ok)
+      console.log('Response headers:', response.headers)
       
       if (response.ok) {
         const responseData = await response.json()
@@ -525,11 +563,33 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
       } else {
         const errorData = await response.json().catch(() => ({ message: 'Upload failed' }))
         console.error('File upload failed:', response.status, errorData)
-        toast.error(errorData.message || `Failed to upload file: ${response.status}`)
+        
+        // Provide specific error messages for deployment issues
+        if (response.status === 413) {
+          toast.error('File too large for server. Please try a smaller file.')
+        } else if (response.status === 500) {
+          toast.error('Server error. File uploads may not be available on this deployment.')
+        } else if (response.status === 404) {
+          toast.error('Upload endpoint not found. Backend may be restarting.')
+        } else if (response.status === 401) {
+          toast.error('Authentication failed. Please log in again.')
+        } else {
+          toast.error(errorData.message || `Failed to upload file: ${response.status}`)
+        }
       }
     } catch (error) {
       console.error('File upload error:', error)
-      toast.error('Failed to upload file')
+      console.error('Error name:', error.name)
+      console.error('Error message:', error.message)
+      
+      // Check if it's a network error (common on deployment)
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        toast.error('Network error. Backend may be down or restarting.')
+      } else if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+        toast.error('Cannot connect to server. Please try again later.')
+      } else {
+        toast.error('Failed to upload file. This feature may not be available on deployment.')
+      }
     } finally {
       setIsUploading(false)
     }
@@ -688,13 +748,166 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
 
   const handleUserSelect = (user: UserData) => {
     setSelectedUser(user)
-    setShowMobileMenu(false)
-    // Clear unread messages for this user
-    setUnreadMessages(prev => {
-      const newUnread = { ...prev }
-      delete newUnread[user.id]
-      return newUnread
-    })
+    setMessages([])
+    setMessageInput('')
+    setShowEmojiPicker(false)
+    setShowGifSearch(false)
+    setHasNewMessages(false)
+    fetchMessages()
+    checkFriendStatus(user.id)
+  }
+
+  // Friend request functions
+  const fetchFriendRequests = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const [receivedResponse, sentResponse] = await Promise.all([
+        fetch(`${config.apiBaseUrl}/api/friend-requests/received`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${config.apiBaseUrl}/api/friend-requests/sent`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      ])
+
+      if (receivedResponse.ok) {
+        const { requests } = await receivedResponse.json()
+        setFriendRequests(requests)
+      }
+
+      if (sentResponse.ok) {
+        const { requests } = await sentResponse.json()
+        setSentRequests(requests)
+      }
+    } catch (error) {
+      console.error('Fetch friend requests error:', error)
+    }
+  }
+
+  const sendFriendRequest = async (receiverId: string) => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/friend-requests`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ receiverId })
+      })
+
+      if (response.ok) {
+        toast.success('Friend request sent!')
+        setFriendStatus(prev => ({ ...prev, [receiverId]: 'sent' }))
+        fetchFriendRequests()
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.message || 'Failed to send friend request')
+      }
+    } catch (error) {
+      console.error('Send friend request error:', error)
+      toast.error('Failed to send friend request')
+    }
+  }
+
+  const acceptFriendRequest = async (requestId: string) => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/friend-requests/${requestId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ action: 'accept' })
+      })
+
+      if (response.ok) {
+        toast.success('Friend request accepted!')
+        fetchFriendRequests()
+        // Update friend status for the sender
+        const request = friendRequests.find(req => req.id === requestId)
+        if (request) {
+          setFriendStatus(prev => ({ ...prev, [request.senderId]: 'friends' }))
+        }
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.message || 'Failed to accept friend request')
+      }
+    } catch (error) {
+      console.error('Accept friend request error:', error)
+      toast.error('Failed to accept friend request')
+    }
+  }
+
+  const declineFriendRequest = async (requestId: string) => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/friend-requests/${requestId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ action: 'decline' })
+      })
+
+      if (response.ok) {
+        toast.success('Friend request declined')
+        fetchFriendRequests()
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.message || 'Failed to decline friend request')
+      }
+    } catch (error) {
+      console.error('Decline friend request error:', error)
+      toast.error('Failed to decline friend request')
+    }
+  }
+
+  const cancelFriendRequest = async (requestId: string) => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/friend-requests/${requestId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (response.ok) {
+        toast.success('Friend request cancelled')
+        fetchFriendRequests()
+        // Update friend status
+        const request = sentRequests.find(req => req.id === requestId)
+        if (request) {
+          setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'none' }))
+        }
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.message || 'Failed to cancel friend request')
+      }
+    } catch (error) {
+      console.error('Cancel friend request error:', error)
+      toast.error('Failed to cancel friend request')
+    }
+  }
+
+  const checkFriendStatus = async (userId: string) => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/friends/${userId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (response.ok) {
+        const { areFriends } = await response.json()
+        setFriendStatus(prev => ({ 
+          ...prev, 
+          [userId]: areFriends ? 'friends' : 'none' 
+        }))
+      }
+    } catch (error) {
+      console.error('Check friend status error:', error)
+    }
   }
 
   return (
@@ -831,13 +1044,46 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                         <p className="font-medium text-sm truncate">{user.username}</p>
                         <p className="text-xs text-secondary-500 truncate">{user.email}</p>
                       </div>
-                      {unreadMessages[user.id] > 0 && (
-                        <div className="flex-shrink-0">
+                      <div className="flex items-center space-x-2">
+                        {unreadMessages[user.id] > 0 && (
                           <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full min-w-[20px] text-center">
                             {unreadMessages[user.id]}
                           </span>
-                        </div>
-                      )}
+                        )}
+                        {/* Friend Request Button */}
+                        {friendStatus[user.id] === 'none' && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              sendFriendRequest(user.id)
+                            }}
+                            className="p-1.5 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                            title="Send friend request"
+                          >
+                            <Users className="w-4 h-4" />
+                          </button>
+                        )}
+                        {friendStatus[user.id] === 'sent' && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const request = sentRequests.find(req => req.receiverId === user.id)
+                              if (request) {
+                                cancelFriendRequest(request.id)
+                              }
+                            }}
+                            className="p-1.5 text-orange-500 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
+                            title="Cancel friend request"
+                          >
+                            <span className="text-xs">⏳</span>
+                          </button>
+                        )}
+                        {friendStatus[user.id] === 'friends' && (
+                          <span className="p-1.5 text-green-500" title="Friends">
+                            <span className="text-xs">✓</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </motion.div>
                 ))}
@@ -845,6 +1091,60 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
             )}
           </div>
         </div>
+        
+        {/* Friend Requests Section */}
+        {friendRequests.length > 0 && (
+          <div className="border-t border-secondary-200 p-4">
+            <h3 className="text-sm font-semibold text-secondary-600 mb-3 flex items-center">
+              <Users className="w-4 h-4 mr-2" />
+              Friend Requests ({friendRequests.length})
+            </h3>
+            <div className="space-y-2">
+              {friendRequests.map((request) => (
+                <motion.div
+                  key={request.id}
+                  className="p-3 rounded-lg bg-blue-50 border border-blue-200"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <div className="flex items-center space-x-3 mb-2">
+                    {request.sender?.avatar ? (
+                      <img 
+                        src={getFullUrl(request.sender.avatar)} 
+                        alt={request.sender.username}
+                        className="w-8 h-8 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
+                        <span className="text-white text-sm font-semibold">
+                          {request.sender?.username?.[0]?.toUpperCase() || 'U'}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{request.sender?.username || 'Unknown User'}</p>
+                      <p className="text-xs text-secondary-500">Wants to be your friend</p>
+                    </div>
+                  </div>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => acceptFriendRequest(request.id)}
+                      className="flex-1 px-3 py-1.5 bg-green-500 text-white text-xs rounded-lg hover:bg-green-600 transition-colors"
+                    >
+                      Accept
+                    </button>
+                    <button
+                      onClick={() => declineFriendRequest(request.id)}
+                      className="flex-1 px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 transition-colors"
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Mobile Header - Only visible on mobile */}
@@ -997,13 +1297,46 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                       <p className="font-medium text-sm truncate">{user.username}</p>
                       <p className="text-xs text-secondary-500 truncate">{user.email}</p>
                     </div>
-                    {unreadMessages[user.id] > 0 && (
-                      <div className="flex-shrink-0">
+                    <div className="flex items-center space-x-2">
+                      {unreadMessages[user.id] > 0 && (
                         <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full min-w-[20px] text-center">
                           {unreadMessages[user.id]}
                         </span>
-                      </div>
-                    )}
+                      )}
+                      {/* Friend Request Button */}
+                      {friendStatus[user.id] === 'none' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            sendFriendRequest(user.id)
+                          }}
+                          className="p-1.5 text-blue-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                          title="Send friend request"
+                        >
+                          <Users className="w-4 h-4" />
+                        </button>
+                      )}
+                      {friendStatus[user.id] === 'sent' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const request = sentRequests.find(req => req.receiverId === user.id)
+                            if (request) {
+                              cancelFriendRequest(request.id)
+                            }
+                          }}
+                          className="p-1.5 text-orange-500 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
+                          title="Cancel friend request"
+                        >
+                          <span className="text-xs">⏳</span>
+                        </button>
+                      )}
+                      {friendStatus[user.id] === 'friends' && (
+                        <span className="p-1.5 text-green-500" title="Friends">
+                          <span className="text-xs">✓</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               ))}
@@ -1339,14 +1672,14 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         <div className="bg-white border-t border-secondary-200 p-3 sm:p-4 relative">
           {/* Emoji Picker */}
           {showEmojiPicker && (
-            <div className="absolute bottom-full left-3 sm:left-4 mb-2 z-50 emoji-picker bg-white border rounded-lg shadow-lg p-4">
+            <div className="absolute bottom-full left-3 sm:left-4 mb-2 z-50 emoji-picker bg-white border rounded-lg shadow-lg p-4 max-h-60 overflow-y-auto">
               <EmojiPicker onEmojiClick={handleEmojiClick} />
             </div>
           )}
           
           {/* GIF Search */}
           {showGifSearch && (
-            <div className="absolute bottom-full left-3 sm:left-4 mb-2 z-50 bg-white border rounded-lg shadow-lg p-4 w-72 sm:w-80 gif-search">
+            <div className="absolute bottom-full left-3 sm:left-4 mb-2 z-50 bg-white border rounded-lg shadow-lg p-4 w-72 sm:w-80 gif-search max-h-60 overflow-y-auto">
               <div className="mb-3">
                 <input
                   type="text"
@@ -1371,7 +1704,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                   )}
                 </button>
               </div>
-              <div className="max-h-60 overflow-y-auto grid grid-cols-2 gap-2">
+              <div className="max-h-40 overflow-y-auto grid grid-cols-2 gap-2">
                 {gifResults.map((gif) => (
                   <img
                     key={gif.id}
@@ -1386,7 +1719,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
           )}
           
           <div className="flex items-center space-x-2 sm:space-x-3">
-            <div className="flex items-center space-x-1 sm:space-x-2">
+            <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
               <button
                 onClick={() => {
                   console.log('Emoji button clicked, current state:', showEmojiPicker)
@@ -1412,7 +1745,12 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
               </button>
               
               <button
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  console.log('File upload button clicked!')
+                  console.log('fileInputRef.current:', fileInputRef.current)
+                  console.log('isUploading:', isUploading)
+                  fileInputRef.current?.click()
+                }}
                 disabled={isUploading}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
                 title="Upload file"
@@ -1433,7 +1771,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
               />
             </div>
             
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <textarea
                 value={messageInput}
                 onChange={(e) => {
@@ -1443,16 +1781,17 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
                 onKeyPress={handleKeyPress}
                 onBlur={() => handleTyping(false)}
                 placeholder={selectedUser ? `Message ${selectedUser.username}...` : 'Select a user to start chatting...'}
-                className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
                 rows={1}
                 disabled={!selectedUser}
+                style={{ minHeight: '44px' }}
               />
             </div>
             
             <button
               onClick={handleSendMessage}
               disabled={!messageInput.trim() || !selectedUser}
-              className="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
               title="Send message"
             >
               <Send className="w-4 h-4 sm:w-5 sm:h-5" />
