@@ -30,9 +30,13 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || 'your-goog
 // MongoDB Connection - Use environment variable or fallback to in-memory
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://govindayadav2478:Geh3eqcU5ub0X58G@cluster0.vqwlghm.mongodb.net/'
 
+// Check if we're in a deployment environment
+const isDeployment = process.env.NODE_ENV === 'production' || process.env.RENDER || process.env.VERCEL
+
 // In-memory storage fallback
 const inMemoryUsers = new Map()
 const inMemoryMessages = []
+const inMemoryFiles = new Map() // Store file metadata for recovery
 
 // MongoDB connection
 let isConnected = false
@@ -82,8 +86,20 @@ const messageSchema = new mongoose.Schema({
   fileSize: { type: Number }
 })
 
+const fileSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  filename: { type: String, required: true },
+  originalName: { type: String, required: true },
+  fileUrl: { type: String, required: true },
+  fileSize: { type: Number, required: true },
+  mimeType: { type: String, required: true },
+  uploadedBy: { type: String, required: true },
+  uploadedAt: { type: Date, default: Date.now }
+})
+
 const User = mongoose.model('User', userSchema)
 const Message = mongoose.model('Message', messageSchema)
+const File = mongoose.model('File', fileSchema)
 
 // Helper functions for in-memory storage
 const findUserByEmail = (email) => {
@@ -123,6 +139,20 @@ const getMessagesBetweenUsers = (userId1, userId2) => {
     (msg.senderId === userId1 && msg.receiverId === userId2) ||
     (msg.senderId === userId2 && msg.receiverId === userId1)
   ).slice(-100)
+}
+
+// File storage helper functions
+const saveFile = (fileData) => {
+  inMemoryFiles.set(fileData.id, fileData)
+  return fileData
+}
+
+const findFileById = (id) => {
+  return inMemoryFiles.get(id)
+}
+
+const getAllFiles = () => {
+  return Array.from(inMemoryFiles.values())
 }
 
 // Middleware
@@ -526,6 +556,28 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
     const baseUrl = req.protocol + '://' + req.get('host')
     const fileUrl = `${baseUrl}/uploads/${req.file.filename}`
     
+    // Create file metadata
+    const fileData = {
+      id: uuidv4(),
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      fileUrl,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype,
+      uploadedBy: req.user.id,
+      uploadedAt: new Date()
+    }
+
+    // Store file metadata in database
+    if (isConnected) {
+      const newFile = new File(fileData)
+      await newFile.save()
+      console.log('File metadata saved to MongoDB')
+    } else {
+      saveFile(fileData)
+      console.log('File metadata saved to memory')
+    }
+    
     res.json({
       fileUrl,
       fileName: req.file.originalname,
@@ -559,6 +611,25 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
     const avatarUrl = `${baseUrl}/uploads/${req.file.filename}`
     console.log('Profile upload endpoint - Avatar URL:', avatarUrl)
     
+    // Store file metadata for profile pictures too
+    const fileData = {
+      id: uuidv4(),
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      fileUrl: avatarUrl,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype,
+      uploadedBy: req.user.id,
+      uploadedAt: new Date()
+    }
+
+    if (isConnected) {
+      const newFile = new File(fileData)
+      await newFile.save()
+    } else {
+      saveFile(fileData)
+    }
+    
     // Update user's avatar in database
     if (isConnected) {
       const updatedUser = await User.findOneAndUpdate(
@@ -583,6 +654,22 @@ app.post('/api/profile/upload', authenticateToken, upload.single('file'), async 
     res.json({ avatar: avatarUrl })
   } catch (error) {
     console.error('Profile upload error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Endpoint to recover files from database (useful after server restart)
+app.get('/api/files/recover', authenticateToken, async (req, res) => {
+  try {
+    if (isConnected) {
+      const files = await File.find({ uploadedBy: req.user.id }).sort({ uploadedAt: -1 })
+      res.json({ files, message: 'Files recovered from MongoDB' })
+    } else {
+      const files = getAllFiles().filter(file => file.uploadedBy === req.user.id)
+      res.json({ files, message: 'Files recovered from memory' })
+    }
+  } catch (error) {
+    console.error('File recovery error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })

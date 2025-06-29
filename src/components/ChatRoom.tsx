@@ -71,6 +71,29 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     return `${config.apiBaseUrl}${url}`
   }
 
+  // Function to recover files from database after server restart
+  const recoverFiles = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${config.apiBaseUrl}/api/files/recover`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      
+      if (response.ok) {
+        const { files } = await response.json()
+        console.log('Recovered files from database:', files.length)
+        // You can use this to restore file references if needed
+        return files
+      }
+    } catch (error) {
+      console.error('File recovery error:', error)
+    }
+    return []
+  }
+
   // Create notification sound
   const playNotificationSound = () => {
     if (!notificationsEnabled) return
@@ -130,6 +153,9 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     }
     
     testBackendConnection()
+    
+    // Recover files from database (useful after server restart)
+    recoverFiles()
     
     // Request notification permission immediately
     if ('Notification' in window) {
@@ -388,29 +414,56 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   }
 
   const handleEmojiClick = (emojiObject: any) => {
-    setMessageInput(prev => prev + emojiObject.emoji)
-    setShowEmojiPicker(false)
+    try {
+      console.log('Emoji clicked:', emojiObject)
+      setMessageInput(prev => prev + emojiObject.emoji)
+      setShowEmojiPicker(false)
+      toast.success('Emoji added!')
+    } catch (error) {
+      console.error('Error handling emoji click:', error)
+      toast.error('Failed to add emoji')
+    }
   }
 
   const searchGifs = async (query: string) => {
-    if (!query.trim()) return
+    if (!query.trim()) {
+      toast.error('Please enter a search term')
+      return
+    }
     
     setIsSearchingGifs(true)
     try {
-      // Using GIPHY API with a better key for demo purposes
-      // In production, you should use your own GIPHY API key
-      const response = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=GlVGYHkr3WSBnllca54iNt0yFbjz7L65&q=${encodeURIComponent(query)}&limit=12&rating=g`)
+      console.log('Searching GIFs for:', query)
+      
+      // Use GIPHY API key
+      const giphyApiKey = 'NDteicumrzsd5MAYmWvLDIJSmCj7T2SC'
+      
+      const response = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${giphyApiKey}&q=${encodeURIComponent(query)}&limit=12&rating=g`)
+      
+      if (!response.ok) {
+        if (response.status === 403) {
+          throw new Error('GIPHY API key is invalid or quota exceeded')
+        }
+        throw new Error(`GIPHY API error: ${response.status}`)
+      }
+      
       const data = await response.json()
+      console.log('GIF search results:', data)
       
       if (data.data && data.data.length > 0) {
         setGifResults(data.data)
+        toast.success(`Found ${data.data.length} GIFs`)
       } else {
         toast.error('No GIFs found for this search')
         setGifResults([])
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('GIF search failed:', error)
-      toast.error('Failed to search GIFs. Please try again.')
+      if (error.message && error.message.includes('API key')) {
+        toast.error('GIPHY API key issue. Please check your configuration.')
+      } else {
+        toast.error('Failed to search GIFs. Please try again.')
+      }
       setGifResults([])
     } finally {
       setIsSearchingGifs(false)
@@ -418,9 +471,17 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   }
 
   const handleGifSelect = (gif: any) => {
-    sendMessage(gif.images.original.url, 'gif', undefined, undefined, gif.images.original.url)
-    setShowGifSearch(false)
-    setGifSearchQuery('')
+    try {
+      console.log('GIF selected:', gif)
+      const gifUrl = gif.images.original.url
+      sendMessage(gifUrl, 'gif', undefined, undefined, gifUrl)
+      setShowGifSearch(false)
+      setGifSearchQuery('')
+      toast.success('GIF sent!')
+    } catch (error) {
+      console.error('Error sending GIF:', error)
+      toast.error('Failed to send GIF')
+    }
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -590,12 +651,15 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                   src={getFullUrl(currentUser.avatar)} 
                   alt={currentUser.username}
                   className="w-10 h-10 rounded-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none'
+                    e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                  }}
                 />
-              ) : (
-                <div className="w-10 h-10 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
-                  <span className="text-white font-semibold">{currentUser.username[0].toUpperCase()}</span>
-                </div>
-              )}
+              ) : null}
+              <div className={`w-10 h-10 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${currentUser.avatar ? 'hidden' : ''}`}>
+                <span className="text-white font-semibold">{currentUser.username[0].toUpperCase()}</span>
+              </div>
               <button
                 onClick={() => profileInputRef.current?.click()}
                 disabled={isUploadingProfile}
@@ -679,14 +743,17 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                           src={getFullUrl(user.avatar)} 
                           alt={user.username}
                           className="w-8 h-8 rounded-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                            e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                          }}
                         />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
-                          <span className="text-white text-sm font-semibold">
-                            {user.username[0].toUpperCase()}
-                          </span>
-                        </div>
-                      )}
+                      ) : null}
+                      <div className={`w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${user.avatar ? 'hidden' : ''}`}>
+                        <span className="text-white text-sm font-semibold">
+                          {user.username[0].toUpperCase()}
+                        </span>
+                      </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{user.username}</p>
                         <p className="text-xs text-secondary-500 truncate">{user.email}</p>
@@ -720,12 +787,15 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                   src={getFullUrl(currentUser.avatar)} 
                   alt={currentUser.username}
                   className="w-8 h-8 rounded-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none'
+                    e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                  }}
                 />
-              ) : (
-                <div className="w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
-                  <span className="text-white text-sm font-semibold">{currentUser.username[0].toUpperCase()}</span>
-                </div>
-              )}
+              ) : null}
+              <div className={`w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${currentUser.avatar ? 'hidden' : ''}`}>
+                <span className="text-white text-sm font-semibold">{currentUser.username[0].toUpperCase()}</span>
+              </div>
               <button
                 onClick={() => profileInputRef.current?.click()}
                 disabled={isUploadingProfile}
@@ -812,14 +882,17 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                       src={getFullUrl(user.avatar)} 
                       alt={user.username}
                       className="w-8 h-8 rounded-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none'
+                        e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                      }}
                     />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
-                      <span className="text-white text-sm font-semibold">
-                        {user.username[0].toUpperCase()}
-                      </span>
-                    </div>
-                  )}
+                  ) : null}
+                  <div className={`w-8 h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${user.avatar ? 'hidden' : ''}`}>
+                    <span className="text-white text-sm font-semibold">
+                      {user.username[0].toUpperCase()}
+                    </span>
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm truncate">{user.username}</p>
                     <p className="text-xs text-secondary-500 truncate">{user.email}</p>
@@ -850,14 +923,17 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                     src={getFullUrl(selectedUser.avatar)} 
                     alt={selectedUser.username}
                     className="w-10 h-10 rounded-full object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none'
+                      e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                    }}
                   />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
-                    <span className="text-white font-semibold">
-                      {selectedUser.username[0].toUpperCase()}
-                    </span>
-                  </div>
-                )}
+                ) : null}
+                <div className={`w-10 h-10 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${selectedUser.avatar ? 'hidden' : ''}`}>
+                  <span className="text-white font-semibold">
+                    {selectedUser.username[0].toUpperCase()}
+                  </span>
+                </div>
                 <div>
                   <h3 className="font-semibold">{selectedUser.username}</h3>
                   <p className="text-sm text-secondary-500">{selectedUser.email}</p>
@@ -910,14 +986,17 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                           src={getFullUrl(message.sender.avatar)} 
                           alt={message.sender.username}
                           className="w-6 h-6 sm:w-8 sm:h-8 rounded-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                            e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                          }}
                         />
-                      ) : (
-                        <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center">
-                          <span className="text-white text-xs font-semibold">
-                            {message.sender.username[0].toUpperCase()}
-                          </span>
-                        </div>
-                      )}
+                      ) : null}
+                      <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center ${message.sender.avatar ? 'hidden' : ''}`}>
+                        <span className="text-white text-xs font-semibold">
+                          {message.sender.username[0].toUpperCase()}
+                        </span>
+                      </div>
                     </div>
                   )}
                   
@@ -933,7 +1012,16 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                             alt="Shared image" 
                             className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                             onClick={() => window.open(getFullUrl(message.fileUrl || message.content), '_blank')}
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                              e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                            }}
                           />
+                          <div className="hidden p-4 bg-gray-100 rounded-lg text-center">
+                            <Image className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                            <p className="text-sm text-gray-500">Image not available</p>
+                            <p className="text-xs text-gray-400">File may have been removed after server restart</p>
+                          </div>
                         </div>
                       )}
                       
@@ -944,7 +1032,16 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
                             alt="GIF" 
                             className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                             onClick={() => window.open(getFullUrl(message.fileUrl || message.content), '_blank')}
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                              e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                            }}
                           />
+                          <div className="hidden p-4 bg-gray-100 rounded-lg text-center">
+                            <Image className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                            <p className="text-sm text-gray-500">GIF not available</p>
+                            <p className="text-xs text-gray-400">File may have been removed after server restart</p>
+                          </div>
                         </div>
                       )}
                       
