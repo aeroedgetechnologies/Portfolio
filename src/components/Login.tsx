@@ -98,13 +98,6 @@ export default function Login({ onLogin }: LoginProps) {
         
         const google = window.google as any
         
-        const clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID
-        if (!clientId) {
-          toast.error('Google OAuth not configured. Please check environment variables.')
-          setIsGoogleLoading(false)
-          return
-        }
-        
         google.accounts.id.initialize({
           client_id: '608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com',
           callback: async (response: any) => {

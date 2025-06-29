@@ -338,6 +338,13 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
 
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element
+      
+      // Don't close if clicking on emoji or GIF buttons
+      if (target.closest('button[title="Add emoji"]') || target.closest('button[title="Search GIFs"]')) {
+        return
+      }
+      
+      // Close if clicking outside emoji picker and GIF search
       if (!target.closest('.emoji-picker') && !target.closest('.gif-search')) {
         setShowEmojiPicker(false)
         setShowGifSearch(false)
@@ -1113,8 +1120,24 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
         <div className="bg-white border-t border-secondary-200 p-3 sm:p-4 relative">
           {/* Emoji Picker */}
           {showEmojiPicker && (
-            <div className="absolute bottom-full left-3 sm:left-4 mb-2 z-50 emoji-picker">
-              <EmojiPicker onEmojiClick={handleEmojiClick} />
+            <div className="absolute bottom-full left-3 sm:left-4 mb-2 z-50 emoji-picker bg-white border rounded-lg shadow-lg p-4">
+              <div className="mb-2 text-sm font-medium">Emoji Picker</div>
+              <div className="grid grid-cols-8 gap-1">
+                {['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰'].map((emoji, index) => (
+                  <button
+                    key={index}
+                    onClick={() => {
+                      console.log('Emoji clicked:', emoji)
+                      setMessageInput(prev => prev + emoji)
+                      setShowEmojiPicker(false)
+                    }}
+                    className="p-2 hover:bg-gray-100 rounded text-lg"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 text-xs text-gray-500">Simple emoji picker for testing</div>
             </div>
           )}
           
@@ -1162,7 +1185,11 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
           <div className="flex items-center space-x-2 sm:space-x-3">
             <div className="flex items-center space-x-1 sm:space-x-2">
               <button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                onClick={() => {
+                  console.log('Emoji button clicked, current state:', showEmojiPicker)
+                  setShowEmojiPicker(!showEmojiPicker)
+                  setShowGifSearch(false) // Close GIF search when opening emoji picker
+                }}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Add emoji"
               >
@@ -1170,7 +1197,11 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
               </button>
               
               <button
-                onClick={() => setShowGifSearch(!showGifSearch)}
+                onClick={() => {
+                  console.log('GIF button clicked, current state:', showGifSearch)
+                  setShowGifSearch(!showGifSearch)
+                  setShowEmojiPicker(false) // Close emoji picker when opening GIF search
+                }}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Search GIFs"
               >
