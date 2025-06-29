@@ -137,13 +137,22 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
     const testBackendConnection = async () => {
       try {
         console.log('Testing backend connection to:', config.apiBaseUrl)
+        
+        // Test basic connectivity
+        const testResponse = await fetch(`${config.apiBaseUrl}/api/test`)
+        console.log('Backend test response:', testResponse.status, testResponse.ok)
+        if (testResponse.ok) {
+          const testData = await testResponse.json()
+          console.log('Backend test data:', testData)
+        }
+        
         const response = await fetch(`${config.apiBaseUrl}/api/users`, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`
           }
         })
-        console.log('Backend test response:', response.status, response.ok)
+        console.log('Users API response:', response.status, response.ok)
         if (!response.ok) {
           console.error('Backend connection failed:', response.status)
         }
@@ -414,22 +423,13 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
   }
 
   const handleEmojiClick = (emojiObject: any) => {
-    try {
-      console.log('Emoji clicked:', emojiObject)
-      setMessageInput(prev => prev + emojiObject.emoji)
-      setShowEmojiPicker(false)
-      toast.success('Emoji added!')
-    } catch (error) {
-      console.error('Error handling emoji click:', error)
-      toast.error('Failed to add emoji')
-    }
+    console.log('Emoji clicked:', emojiObject)
+    setMessageInput(prev => prev + emojiObject.emoji)
+    setShowEmojiPicker(false)
   }
 
   const searchGifs = async (query: string) => {
-    if (!query.trim()) {
-      toast.error('Please enter a search term')
-      return
-    }
+    if (!query.trim()) return
     
     setIsSearchingGifs(true)
     try {
@@ -440,31 +440,19 @@ export default function ChatRoom({ onBack, currentUser }: ChatRoomProps) {
       
       const response = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${giphyApiKey}&q=${encodeURIComponent(query)}&limit=12&rating=g`)
       
-      if (!response.ok) {
-        if (response.status === 403) {
-          throw new Error('GIPHY API key is invalid or quota exceeded')
-        }
-        throw new Error(`GIPHY API error: ${response.status}`)
-      }
+      console.log('GIF search response status:', response.status)
       
-      const data = await response.json()
-      console.log('GIF search results:', data)
-      
-      if (data.data && data.data.length > 0) {
+      if (response.ok) {
+        const data = await response.json()
+        console.log('GIF search results:', data.data.length)
         setGifResults(data.data)
-        toast.success(`Found ${data.data.length} GIFs`)
       } else {
-        toast.error('No GIFs found for this search')
-        setGifResults([])
+        console.error('GIF search failed:', response.status)
+        toast.error('Failed to search GIFs')
       }
-    } catch (error: any) {
-      console.error('GIF search failed:', error)
-      if (error.message && error.message.includes('API key')) {
-        toast.error('GIPHY API key issue. Please check your configuration.')
-      } else {
-        toast.error('Failed to search GIFs. Please try again.')
-      }
-      setGifResults([])
+    } catch (error) {
+      console.error('GIF search error:', error)
+      toast.error('Failed to search GIFs')
     } finally {
       setIsSearchingGifs(false)
     }

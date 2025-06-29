@@ -90,10 +90,12 @@ export default function Login({ onLogin }: LoginProps) {
 
   const handleGoogleLogin = async () => {
     setIsGoogleLoading(true)
-    
     try {
-      // Check if Google OAuth is available
-      if (typeof window !== 'undefined' && window.google) {
+      console.log('Starting Google OAuth login...')
+      
+      if (window.google && window.google.accounts && window.google.accounts.id) {
+        console.log('Google OAuth library loaded, initializing...')
+        
         const google = window.google as any
         
         const clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID
@@ -116,7 +118,9 @@ export default function Login({ onLogin }: LoginProps) {
                 body: JSON.stringify({ token: response.credential }),
               })
 
+              console.log('Google auth response status:', result.status)
               const data = await result.json()
+              console.log('Google auth response data:', data)
 
               if (result.ok) {
                 localStorage.setItem('token', data.token)
@@ -135,15 +139,17 @@ export default function Login({ onLogin }: LoginProps) {
           }
         })
 
+        console.log('Prompting Google OAuth...')
         google.accounts.id.prompt()
       } else {
+        console.log('Google OAuth library not available, using redirect...')
         // Fallback: redirect to Google OAuth
-        const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com&redirect_uri=${encodeURIComponent('http://localhost:3000/auth/google/callback')}&response_type=code&scope=email profile&access_type=offline`
+        const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com&redirect_uri=${encodeURIComponent('http://govindayadavfolio.vercel.app/auth/google/callback')}&response_type=code&scope=email profile&access_type=offline`
         window.location.href = googleAuthUrl
       }
     } catch (error) {
-      console.error('Google OAuth error:', error)
-      toast.error('Google OAuth not available')
+      console.error('Google login error:', error)
+      toast.error('Google login failed')
       setIsGoogleLoading(false)
     }
   }

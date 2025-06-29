@@ -10,9 +10,17 @@ import { fileURLToPath } from 'url'
 import { v4 as uuidv4 } from 'uuid'
 import mongoose from 'mongoose'
 import { OAuth2Client } from 'google-auth-library'
+import fs from 'fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, 'uploads')
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true })
+  console.log('📁 Created uploads directory')
+}
 
 const app = express()
 const server = createServer(app)
@@ -25,10 +33,10 @@ const io = new Server(server, {
 })
 
 // Google OAuth client
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || 'your-google-client-id')
+const googleClient = new OAuth2Client('608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com')
 
 // MongoDB Connection - Use environment variable or fallback to in-memory
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://govindayadav2478:Geh3eqcU5ub0X58G@cluster0.vqwlghm.mongodb.net/'
+const MONGODB_URI = 'mongodb+srv://govindayadav2478:Geh3eqcU5ub0X58G@cluster0.vqwlghm.mongodb.net/'
 
 // Check if we're in a deployment environment
 const isDeployment = process.env.NODE_ENV === 'production' || process.env.RENDER || process.env.VERCEL
@@ -162,12 +170,12 @@ app.use(cors({
 }))
 app.use(express.json())
 app.use(express.static(path.join(__dirname, '../dist')))
-app.use('/uploads', express.static('uploads'))
+app.use('/uploads', express.static(uploadsDir))
 
 // File upload configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/')
+    cb(null, uploadsDir)
   },
   filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`
@@ -211,7 +219,7 @@ app.post('/api/auth/google', async (req, res) => {
     
     const ticket = await googleClient.verifyIdToken({
       idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID || 'your-google-client-id'
+      audience: '608696852958-egnf941du33oe5cnjp7gc1vhfth7c6pi.apps.googleusercontent.com'
     })
     
     const payload = ticket.getPayload()
@@ -691,6 +699,16 @@ app.get('/api/users', authenticateToken, async (req, res) => {
     console.error('Get users error:', error)
     res.status(500).json({ message: 'Server error' })
   }
+})
+
+// Test endpoint to verify backend is working
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    message: 'Backend is working!', 
+    timestamp: new Date().toISOString(),
+    mongodb: isConnected ? 'connected' : 'disconnected',
+    deployment: isDeployment ? 'yes' : 'no'
+  })
 })
 
 // Socket.IO connection handling
