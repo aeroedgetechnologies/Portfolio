@@ -939,7 +939,15 @@ app.post('/api/friend-requests', authenticateToken, async (req, res) => {
     }
 
     // Emit friend request event to receiver
-    io.emit('friend-request:received', {
+    console.log('Emitting friend-request:received to receiver:', receiverId)
+    io.to(`user:${receiverId}`).emit('friend-request:received', {
+      ...friendRequest,
+      sender: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
+    })
+
+    // Also emit to sender for immediate UI update
+    console.log('Emitting friend-request:sent to sender:', senderId)
+    io.to(`user:${senderId}`).emit('friend-request:sent', {
       ...friendRequest,
       sender: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
     })
@@ -1008,18 +1016,26 @@ app.put('/api/friend-requests/:requestId', authenticateToken, async (req, res) =
 
     if (action === 'accept') {
       request.status = 'accepted'
-      // Emit friend request accepted event to sender
-      io.emit('friend-request:accepted', {
+      // Emit friend request accepted event to both sender and receiver
+      const acceptedEvent = {
         ...request,
         receiver: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
-      })
+      }
+      console.log('Emitting friend-request:accepted to sender:', request.senderId)
+      console.log('Emitting friend-request:accepted to receiver:', request.receiverId)
+      io.to(`user:${request.senderId}`).emit('friend-request:accepted', acceptedEvent)
+      io.to(`user:${request.receiverId}`).emit('friend-request:accepted', acceptedEvent)
     } else if (action === 'decline') {
       request.status = 'declined'
-      // Emit friend request declined event to sender
-      io.emit('friend-request:declined', {
+      // Emit friend request declined event to both sender and receiver
+      const declinedEvent = {
         ...request,
         receiver: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
-      })
+      }
+      console.log('Emitting friend-request:declined to sender:', request.senderId)
+      console.log('Emitting friend-request:declined to receiver:', request.receiverId)
+      io.to(`user:${request.senderId}`).emit('friend-request:declined', declinedEvent)
+      io.to(`user:${request.receiverId}`).emit('friend-request:declined', declinedEvent)
     } else {
       return res.status(400).json({ message: 'Invalid action' })
     }
@@ -1057,11 +1073,20 @@ app.delete('/api/friend-requests/:requestId', authenticateToken, async (req, res
       return res.status(404).json({ message: 'Friend request not found' })
     }
 
-    // Emit friend request cancelled event to receiver
-    io.emit('friend-request:cancelled', {
+    // Emit friend request cancelled event to both sender and receiver
+    const cancelledEvent = {
       ...request,
       sender: { id: req.user.id, username: req.user.username, avatar: req.user.avatar }
-    })
+    }
+    
+    console.log('Emitting friend-request:cancelled to sender:', request.senderId)
+    console.log('Emitting friend-request:cancelled to receiver:', request.receiverId)
+    
+    // Emit to sender (the one who cancelled)
+    io.to(`user:${request.senderId}`).emit('friend-request:cancelled', cancelledEvent)
+    
+    // Also emit to receiver if they're online
+    io.to(`user:${request.receiverId}`).emit('friend-request:cancelled', cancelledEvent)
 
     if (isConnected) {
       await FriendRequest.deleteOne({ id: requestId })
@@ -1132,7 +1157,10 @@ io.on('connection', (socket) => {
         }
       }
       
+      // Join general room and user-specific room
       socket.join('general')
+      socket.join(`user:${userData.id}`)
+      console.log(`User ${userData.username} (${userData.id}) joined rooms: general, user:${userData.id}`)
       socket.broadcast.emit('user:joined', userData)
     } catch (error) {
       console.error('Join error:', error)

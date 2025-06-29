@@ -77,7 +77,6 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   const [isChangingUsername, setIsChangingUsername] = useState(false)
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([])
   const [sentRequests, setSentRequests] = useState<FriendRequest[]>([])
-  const [showFriendRequests, setShowFriendRequests] = useState(false)
   const [showFriendRequestsSection, setShowFriendRequestsSection] = useState(true)
   const [friendStatus, setFriendStatus] = useState<{[key: string]: 'none' | 'pending' | 'sent' | 'friends'}>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -382,21 +381,36 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
     })
 
     newSocket.on('friend-request:cancelled', (request: FriendRequest) => {
-      console.log('Friend request cancelled:', request)
+      console.log('Friend request cancelled socket event received:', request)
+      console.log('Current user ID:', currentUser.id)
+      console.log('Request sender ID:', request.senderId)
+      console.log('Request receiver ID:', request.receiverId)
       
       // If YOU are the sender and you cancelled your request
       if (request.senderId === currentUser.id) {
+        console.log('You are the sender - updating UI for cancellation')
         toast.success('Friend request cancelled')
         // Update friend status immediately
         setFriendStatus(prev => ({ ...prev, [request.receiverId]: 'none' }))
         // Remove from sent requests list
-        setSentRequests(prev => prev.filter(req => req.id !== request.id))
+        setSentRequests(prev => {
+          const filtered = prev.filter(req => req.id !== request.id)
+          console.log('Updated sent requests:', filtered)
+          return filtered
+        })
       }
       // If YOU are the receiver and someone cancelled their request to you
       else if (request.receiverId === currentUser.id) {
+        console.log('You are the receiver - updating UI for cancellation')
         toast.error('Friend request was cancelled by sender')
         // Remove from friend requests list
-        setFriendRequests(prev => prev.filter(req => req.id !== request.id))
+        setFriendRequests(prev => {
+          const filtered = prev.filter(req => req.id !== request.id)
+          console.log('Updated friend requests:', filtered)
+          return filtered
+        })
+      } else {
+        console.log('Neither sender nor receiver - ignoring event')
       }
     })
 
@@ -714,17 +728,17 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
       }
     } catch (error) {
       console.error('File upload error:', error)
-      console.error('Error name:', error.name)
-      console.error('Error message:', error.message)
+      // console.error('Error name:', error.name)
+      // console.error('Error message:', error.message)
       
       // Check if it's a network error (common on deployment)
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        toast.error('Network error. Backend may be down or restarting.')
-      } else if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-        toast.error('Cannot connect to server. Please try again later.')
-      } else {
-        toast.error('Failed to upload file. This feature may not be available on deployment.')
-      }
+      // if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      //   toast.error('Network error. Backend may be down or restarting.')
+      // } else if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+      //   toast.error('Cannot connect to server. Please try again later.')
+      // } else {
+      //   toast.error('Failed to upload file. This feature may not be available on deployment.')
+      // }
     } finally {
       setIsUploading(false)
     }
@@ -1014,6 +1028,12 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
           if (socket) {
             socket.emit('friend-request:accepted', result)
           }
+          
+          // Fallback: Refresh friend requests after a short delay
+          setTimeout(() => {
+            fetchFriendRequests()
+            checkFriendStatus(request.senderId)
+          }, 1000)
         }
       } else {
         const error = await response.json()
@@ -1055,6 +1075,12 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
           if (socket) {
             socket.emit('friend-request:declined', result)
           }
+          
+          // Fallback: Refresh friend requests after a short delay
+          setTimeout(() => {
+            fetchFriendRequests()
+            checkFriendStatus(request.senderId)
+          }, 1000)
         }
       } else {
         const error = await response.json()
@@ -1095,10 +1121,14 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
           // Remove from sent requests list
           setSentRequests(prev => prev.filter(req => req.id !== requestId))
           
-          // Emit socket event for real-time updates
-          if (socket) {
-            socket.emit('friend-request:cancelled', result)
-          }
+          // The server will emit the socket event for real-time updates
+          console.log('Waiting for server socket event...')
+          
+          // Fallback: Refresh friend requests after a short delay to ensure UI is up to date
+          setTimeout(() => {
+            fetchFriendRequests()
+            checkFriendStatus(request.receiverId)
+          }, 1000)
         }
       } else {
         const error = await response.json()
@@ -1114,6 +1144,8 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
   const checkFriendStatus = async (userId: string) => {
     try {
       const token = localStorage.getItem('token')
+      
+      // Check if they are friends
       const response = await fetch(`${config.apiBaseUrl}/api/friends/${userId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
@@ -1135,13 +1167,30 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
         console.log(`Messages between current user and ${userId}:`, messages.length)
       }
 
-      // Users are friends if they have an accepted friend request OR if they have shared messages
-      const isFriends = areFriends || hasSharedMessages
-      console.log(`Friend status for ${userId}:`, { areFriends, hasSharedMessages, isFriends })
+      // Check for pending friend requests
+      const sentRequestsResponse = await fetch(`${config.apiBaseUrl}/api/friend-requests/sent`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      let hasPendingRequest = false
+      if (sentRequestsResponse.ok) {
+        const { requests } = await sentRequestsResponse.json()
+        hasPendingRequest = requests.some((req: FriendRequest) => req.receiverId === userId)
+        console.log(`Pending request to ${userId}:`, hasPendingRequest)
+      }
+
+      // Determine friend status
+      let status = 'none'
+      if (areFriends || hasSharedMessages) {
+        status = 'friends'
+      } else if (hasPendingRequest) {
+        status = 'sent'
+      }
+      
+      console.log(`Friend status for ${userId}:`, { areFriends, hasSharedMessages, hasPendingRequest, status })
       
       setFriendStatus(prev => ({ 
         ...prev, 
-        [userId]: isFriends ? 'friends' : 'none' 
+        [userId]: status
       }))
     } catch (error: any) {
       console.error('Check friend status error:', error)
