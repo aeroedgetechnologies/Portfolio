@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-  "vercel-build": "npx tsc && vite build"
+"vercel-build": "node_modules/typescript/bin/tsc && vite build"
   },
   "dependencies": {
     "@react-oauth/google": "^0.12.2",
