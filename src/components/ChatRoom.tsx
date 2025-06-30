@@ -1179,7 +1179,7 @@ export default function ChatRoom({ onBack, currentUser, onNavigateToPlayground, 
       }
 
       // Determine friend status
-      let status = 'none'
+      let status: 'none' | 'sent' | 'friends' = 'none'
       if (areFriends || hasSharedMessages) {
         status = 'friends'
       } else if (hasPendingRequest) {
